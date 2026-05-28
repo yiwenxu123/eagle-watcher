@@ -93,12 +93,30 @@ class EagleWatcherMenu(rumps.App):
         for item, name in zip(self.theme_items, get_theme_names()):
             item.title = f"{'✅' if name == cur else '  '} {name}"
 
+    def _rebuild_menu(self):
+        self._load_theme_items()
+        self.menu.clear()
+        self.menu = [
+            self.theme_title,
+            None,
+            *self.theme_items,
+            self.cancel_btn,
+            None,
+            self.today_item,
+            self.inbox_item,
+            None,
+            self.open_btn,
+            self.sort_btn,
+            None,
+            self.manage_btn,
+            self.quit_btn,
+        ]
+        self._mark_theme()
+
     def _refresh_theme(self):
         cur = get_current_theme()
         self.theme_title.title = f"📁 当前主题：{cur or '无（自动匹配）'}"
-        self._load_theme_items()
-        self._build_menu()
-        self._mark_theme()
+        self._rebuild_menu()
 
     def _on_switch(self, name):
         set_current_theme(name)
@@ -349,11 +367,7 @@ class EagleWatcherMenu(rumps.App):
 # —— 原生对话框辅助函数 ——
 
 def _notify(msg):
-    """发送 macOS 通知"""
-    subprocess.run(
-        ["osascript", "-e", f'display notification "{msg}" with title "素材管家"'],
-        capture_output=True, timeout=5,
-    )
+    rumps.notification(title="素材管家", subtitle="", message=msg)
 
 
 def _alert(msg, title="素材管家"):
@@ -420,82 +434,57 @@ def _theme_manage_menu(themes) -> str:
 
 
 def _theme_action_menu(themes) -> str:
-    """主题操作菜单"""
-    script = (
-        'try\n'
-        '  set c to button returned of '
-        '(display dialog "主题管理" buttons {"取消", "删除主题", "创建新主题"} default button 1)\n'
-        '  return c\n'
-        'on error\n'
-        '  return "取消"\n'
-        'end try'
+    result = rumps.alert(
+        title="主题管理",
+        message="选择操作：",
+        ok="创建新主题",
+        cancel="取消",
+        other="删除主题",
     )
-    try:
-        r = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, text=True, timeout=15,
+    if result == 1:
+        return "create"
+    elif result == -1:
+        items_str = '", "'.join(themes)
+        del_script = (
+            'try\n'
+            f'  set choices to {{"{items_str}"}}\n'
+            '  set c to choose from list choices '
+            'with prompt "选择要删除的主题：" '
+            'OK button name "删除" '
+            'Cancel button name "取消"\n'
+            '  if c is false then return ""\n'
+            '  return "delete:" & item 1 of c\n'
+            'on error\n'
+            '  return ""\n'
+            'end try'
         )
-        action = r.stdout.strip()
-        if action == "创建新主题":
-            return "create"
-        elif action == "删除主题":
-            # 选择要删除的主题
-            items_str = '", "'.join(themes)
-            del_script = (
-                'try\n'
-                f'  set choices to {{"{items_str}"}}\n'
-                '  set c to choose from list choices '
-                'with prompt "选择要删除的主题：" '
-                'OK button name "删除" '
-                'Cancel button name "取消"\n'
-                '  if c is false then return ""\n'
-                '  return "delete:" & item 1 of c\n'
-                'on error\n'
-                '  return ""\n'
-                'end try'
-            )
+        try:
             r2 = subprocess.run(
                 ["osascript", "-e", del_script],
                 capture_output=True, text=True, timeout=15,
             )
             return r2.stdout.strip()
-    except Exception as e:
-        _LOG.warning(f"theme_action_menu error: {e}")
+        except Exception:
+            pass
     return ""
 
 
 def _theme_edit_menu(theme_name, current_tags, current_folder) -> str:
-    """主题编辑菜单"""
-    script = (
-        'try\n'
-        '  set c to button returned of '
-        f'(display dialog "编辑主题：{theme_name}" & return & return'
-        f' & "当前标签：{current_tags or "无"}" & return'
-        f' & "文件夹：{current_folder}" & return & return'
-        ' & "选择要编辑的内容："'
-        ' buttons {"取消", "编辑标签", "编辑文件夹"} default button 1)\n'
-        '  return c\n'
-        'on error\n'
-        '  return "取消"\n'
-        'end try'
+    result = rumps.alert(
+        title=f"编辑主题：{theme_name}",
+        message=f"当前标签：{current_tags or '无'}\n文件夹：{current_folder}",
+        ok="编辑标签",
+        cancel="取消",
+        other="编辑文件夹",
     )
-    try:
-        r = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, text=True, timeout=15,
-        )
-        choice = r.stdout.strip()
-        if choice == "编辑标签":
-            return "tags"
-        elif choice == "编辑文件夹":
-            return "folder"
-    except Exception as e:
-        _LOG.warning(f"theme_edit_menu error: {e}")
+    if result == 1:
+        return "tags"
+    elif result == -1:
+        return "folder"
     return ""
 
 
 def _dialog_sort_batch(count: int) -> str:
-    """显示批量操作选择对话框"""
     result = rumps.alert(
         title="通用箱整理",
         message=f"待分类素材：{count} 个\n\n选择整理方式：",
@@ -506,29 +495,17 @@ def _dialog_sort_batch(count: int) -> str:
     if result == 1:
         return "all_confirm"
     elif result == -1:
-        # "更多选项"按钮
-        script = (
-            'try\n'
-            '  set c to button returned of '
-            '(display dialog "选择整理方式：" '
-            'buttons {"取消", "逐个确认", "按主题批量"} default button 1)\n'
-            '  return c\n'
-            'on error\n'
-            '  return "取消"\n'
-            'end try'
+        sub_result = rumps.alert(
+            title="选择整理方式",
+            message="",
+            ok="逐个确认",
+            cancel="取消",
+            other="按主题批量",
         )
-        try:
-            r = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True, text=True, timeout=15,
-            )
-            choice = r.stdout.strip()
-            if choice == "按主题批量":
-                return "by_theme"
-            elif choice == "逐个确认":
-                return "one_by_one"
-        except Exception:
-            pass
+        if sub_result == 1:
+            return "one_by_one"
+        elif sub_result == -1:
+            return "by_theme"
     return ""
 
 
@@ -546,7 +523,6 @@ def _dialog_confirm_theme(theme: str, filenames: list[str], count: int) -> bool:
 
 
 def _dialog_sort_single(filename: str, suggestion: str, tags: str, themes: list) -> str:
-    """单个素材确认对话框"""
     choices = " | ".join(themes[:8])
     msg = f"文件：{filename}\n建议归入：{suggestion}\n标签：{tags}\n\n主题列表：{choices}"
 
@@ -561,31 +537,22 @@ def _dialog_sort_single(filename: str, suggestion: str, tags: str, themes: list)
     if result == 1:
         return "confirm"
     elif result == -1:
-        # "指定主题" - 让用户选择
-        items_str = '", "'.join(themes)
-        script = (
-            'try\n'
-            f'  set choices to {{"{items_str}"}}\n'
-            '  set c to choose from list choices '
-            'with prompt "选择主题：" '
-            'OK button name "确定" '
-            'Cancel button name "取消"\n'
-            '  if c is false then return "cancel"\n'
-            '  return item 1 of c\n'
-            'on error\n'
-            '  return "cancel"\n'
-            'end try'
+        win = rumps.Window(
+            message=f"可用主题：{', '.join(themes)}\n\n输入主题名：",
+            title="指定主题",
+            default_text=suggestion if suggestion != "（未匹配）" else "",
+            ok="确定",
+            cancel="取消",
+            dimensions=(320, 24),
         )
-        try:
-            r = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True, text=True, timeout=15,
-            )
-            chosen = r.stdout.strip()
-            if chosen and chosen != "cancel":
+        resp = win.run()
+        if resp.clicked == 1 and resp.text.strip():
+            chosen = resp.text.strip()
+            if chosen in themes:
                 return chosen
-        except Exception:
-            pass
+            rumps.alert(title="提示", message=f"主题「{chosen}」不在列表中，将新建此主题")
+            _create_theme(chosen)
+            return chosen
         return "skip"
     else:
         return "skip"
