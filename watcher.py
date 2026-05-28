@@ -11,7 +11,8 @@ import time
 from typing import Optional
 from pathlib import Path
 
-from config import load_config, load_state, save_state, ensure_data_dir
+from config import load_config, ensure_data_dir
+from services.state_manager import get_state_manager
 from eagle_api import EagleAPI
 from analyzer import decide
 from ai_tagger import analyze_image
@@ -51,40 +52,35 @@ if HAS_WATCHDOG:
     class DownloadHandler(FileSystemEventHandler):
         """监控 Downloads 文件夹的事件处理器"""
 
-        def __init__(self, eagle: EagleAPI, state: dict):
+        def __init__(self, eagle: EagleAPI):
             super().__init__()
             self.eagle = eagle
-            self.state = state
             self._processing = set()
 
         def on_created(self, event):
-            """文件创建事件"""
             if event.is_directory:
                 return
 
             file_path = event.src_path
             filename = Path(file_path).name
 
-            # 跳过隐藏文件和临时文件
             if filename.startswith("."):
                 return
             if filename.endswith((".crdownload", ".tmp", ".part", ".download")):
                 return
 
-            # 避免重复处理
             if file_path in self._processing:
                 return
             self._processing.add(file_path)
 
             try:
-                # 等待文件写入完成
                 if not _wait_for_file(file_path):
                     _LOG.warning(f"文件写入超时，跳过：{file_path}")
                     return
 
                 _LOG.info(f"watchdog 检测到新文件：{filename}")
                 print(f"\n📥 检测到新文件：{filename}")
-                _process_file(self.eagle, file_path, self.state)
+                _process_file(self.eagle, file_path)
             except Exception as e:
                 _LOG.error(f"处理文件失败：{file_path} — {e}")
                 print(f"  ⚠️  处理失败：{filename} — {e}")
@@ -112,20 +108,20 @@ def _get_downloaded_files(downloads_dir: str, known: set) -> list[str]:
     return new_files
 
 
-def _check_result(result: dict, filename: str, theme: str, tags: list[str], state: dict):
+def _check_result(result: dict, filename: str, theme: str, tags: list[str]):
     if result.get("status") == "success":
         theme_label = theme or "通用箱"
         tag_str = ", ".join(tags)
         print(f"  ✅ {filename} → {theme_label} ｜ {tag_str}")
-        if not theme and not state.get("inbox_notified_today"):
+        sm = get_state_manager()
+        if not theme and not sm.get_inbox_notified_today():
             notify("素材管家", f"📦 通用箱有新素材：{filename}")
-            state["inbox_notified_today"] = True
-            save_state(state)
+            sm.set_inbox_notified_today(True)
     else:
         print(f"  ❌ 入库失败：{filename} — {result}")
 
 
-def _process_file(eagle: EagleAPI, file_path: str, state: dict):
+def _process_file(eagle: EagleAPI, file_path: str):
     filename = Path(file_path).name
     decision = decide(filename)
 
@@ -146,7 +142,7 @@ def _process_file(eagle: EagleAPI, file_path: str, state: dict):
                 tags=ai_tags,
                 folder_id=folder_id,
             )
-            _check_result(result, filename, decision.get("theme", ""), ai_tags, state)
+            _check_result(result, filename, decision.get("theme", ""), ai_tags)
         else:
             print(f"  ⚠️ AI 分析失败，暂存到通用箱")
             result = eagle.add_from_path(
@@ -154,7 +150,7 @@ def _process_file(eagle: EagleAPI, file_path: str, state: dict):
                 tags=["待AI识别"],
                 folder_id=folder_id or eagle.get_or_create_folder("_通用箱"),
             )
-            _check_result(result, filename, decision.get("theme", ""), ["待AI识别"], state)
+            _check_result(result, filename, decision.get("theme", ""), ["待AI识别"])
         return
 
     tags = decision["tags"]
@@ -164,10 +160,10 @@ def _process_file(eagle: EagleAPI, file_path: str, state: dict):
         tags=tags,
         folder_id=folder_id,
     )
-    _check_result(result, filename, decision.get("theme", ""), tags, state)
+    _check_result(result, filename, decision.get("theme", ""), tags)
 
 
-def run_once(eagle: EagleAPI, known_files: set, state: dict) -> set:
+def run_once(eagle: EagleAPI, known_files: set) -> set:
     cfg = load_config()
     downloads_dir = cfg["paths"]["downloads"]
 
@@ -181,20 +177,18 @@ def run_once(eagle: EagleAPI, known_files: set, state: dict) -> set:
     for fpath in new_files:
         known_files.add(fpath)
         try:
-            # 等待文件写入完成
             if not _wait_for_file(fpath):
                 _LOG.warning(f"文件写入超时，跳过：{fpath}")
                 print(f"  ⚠️  文件写入超时，跳过：{Path(fpath).name}")
                 continue
-            _process_file(eagle, fpath, state)
+            _process_file(eagle, fpath)
         except Exception as e:
             print(f"  ⚠️  处理失败：{fpath} — {e}")
 
     return known_files
 
 
-def run_watcher_with_watchdog(eagle: EagleAPI, state: dict):
-    """使用 watchdog 事件驱动监控"""
+def run_watcher_with_watchdog(eagle: EagleAPI):
     cfg = load_config()
     downloads_dir = cfg["paths"]["downloads"]
 
@@ -202,7 +196,7 @@ def run_watcher_with_watchdog(eagle: EagleAPI, state: dict):
         _LOG.error(f"下载目录不存在：{downloads_dir}")
         return
 
-    handler = DownloadHandler(eagle, state)
+    handler = DownloadHandler(eagle)
     observer = Observer()
     observer.schedule(handler, downloads_dir, recursive=False)
     observer.start()
@@ -221,7 +215,6 @@ def run_watcher_with_watchdog(eagle: EagleAPI, state: dict):
 
 
 def run_watcher(eagle: Optional[EagleAPI] = None):
-    """线程友好版 — 持续监控 Downloads，不会因为键盘中断退出。"""
     ensure_data_dir()
     cfg = load_config()
 
@@ -231,15 +224,11 @@ def run_watcher(eagle: Optional[EagleAPI] = None):
             token=cfg["eagle"]["token"],
         )
 
-    state = load_state()
-
-    # 优先使用 watchdog
     if HAS_WATCHDOG:
         _LOG.info("使用 watchdog 事件驱动监控")
-        run_watcher_with_watchdog(eagle, state)
+        run_watcher_with_watchdog(eagle)
         return
 
-    # 降级为轮询方式
     _LOG.info("使用轮询方式监控")
     interval = cfg["paths"].get("watch_interval", 2.0)
 
@@ -252,7 +241,7 @@ def run_watcher(eagle: Optional[EagleAPI] = None):
 
     while True:
         try:
-            known_files = run_once(eagle, known_files, state)
+            known_files = run_once(eagle, known_files)
         except Exception:
             pass
         time.sleep(interval)

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from config import load_config, ensure_data_dir, set_current_theme
+from config import load_config, ensure_data_dir
 from eagle_api import EagleAPI
 
 HOST = "127.0.0.1"
@@ -121,13 +121,6 @@ class ImportHandler(BaseHTTPRequestHandler):
         eagle = self._get_eagle()
         if not eagle:
             return
-
-        # 如果指定了 project，作为提示设置当前主题（不改变已有主题）
-        if project:
-            from config import get_current_theme
-            current = get_current_theme()
-            if not current:
-                set_current_theme(project)
 
         target_folder = folder or project
         folder_id = None

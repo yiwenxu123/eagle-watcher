@@ -1,14 +1,14 @@
-"""配置管理：读 config.yaml + 管理 state.json + 读 themes.yaml"""
+"""配置管理：读 config.yaml + 管理主题 + 读 themes.yaml"""
 
-import json
 import os
 import yaml
 from pathlib import Path
 from typing import Optional
 
+from services.state_manager import get_state_manager
+
 DATA_DIR = Path.home() / ".eagle-watcher"
 CONFIG_PATH = DATA_DIR / "config.yaml"
-STATE_PATH = DATA_DIR / "state.json"
 THEMES_PATH = DATA_DIR / "themes.yaml"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.yaml"
 
@@ -48,31 +48,12 @@ def save_config(cfg: dict):
         yaml.dump(cfg, f, allow_unicode=True)
 
 
-# ────────── state.json（运行时状态）──────────
-
-def load_state() -> dict:
-    ensure_data_dir()
-    if STATE_PATH.exists():
-        with open(STATE_PATH) as f:
-            return json.load(f)
-    return {"current_theme": None, "set_at": None, "inbox_notified_today": False}
-
-
-def save_state(state: dict):
-    ensure_data_dir()
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-
 def get_current_theme() -> Optional[str]:
-    return load_state().get("current_theme")
+    return get_state_manager().get_current_theme()
 
 
-def set_current_theme(theme_name: Optional[str]):
-    state = load_state()
-    state["current_theme"] = theme_name
-    state["set_at"] = __import__("datetime").datetime.now().isoformat()
-    save_state(state)
+def set_current_theme(theme: Optional[str]):
+    get_state_manager().set_current_theme(theme)
 
 
 # ────────── themes.yaml（主题列表）──────────
