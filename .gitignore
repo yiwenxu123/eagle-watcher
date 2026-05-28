@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+
+# macOS
+.DS_Store
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Config (user-specific)
+config.yaml
+# But keep template
+!config.yaml.template
