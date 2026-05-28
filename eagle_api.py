@@ -78,10 +78,25 @@ class EagleAPI:
             body["folderId"] = folder_id
         return self._post("item/addFromURL", body, timeout=120)
 
+    def update_item(self, item_id: str, *, tags: Optional[list[str]] = None,
+                    annotation: Optional[str] = None,
+                    star: Optional[int] = None) -> dict:
+        body: dict = {"id": item_id}
+        if tags is not None:
+            body["tags"] = tags
+        if annotation is not None:
+            body["annotation"] = annotation
+        if star is not None:
+            body["star"] = star
+        return self._post("item/update", body)
+
     # ────────────── 素材查询 ──────────────
 
-    def list_items(self) -> list[dict]:
-        data = self._get("item/list")
+    def list_items(self, folders: Optional[str] = None) -> list[dict]:
+        path = "item/list"
+        if folders:
+            path += f"?folders={folders}"
+        data = self._get(path)
         return data.get("data", [])
 
     # ────────────── 文件夹操作 ──────────────
