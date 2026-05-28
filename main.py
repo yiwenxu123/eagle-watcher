@@ -6,10 +6,12 @@ warnings.filterwarnings("ignore", message=".*NotOpenSSLWarning.*")
 import logging
 import os
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import load_config, ensure_data_dir, validate_config, DATA_DIR
+from services.state_manager import get_state_manager
 from eagle_api import EagleAPI
 
 
@@ -27,10 +29,23 @@ def setup_logging():
     )
 
 
+def start_daily_reset():
+    def _loop():
+        while True:
+            now = datetime.now()
+            tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0)
+            sleep_sec = (tomorrow - now).total_seconds()
+            time.sleep(sleep_sec)
+            get_state_manager().reset_daily_flags()
+    threading.Thread(target=_loop, daemon=True, name="daily-reset").start()
+
+
 def main():
     setup_logging()
     _LOG = logging.getLogger("main")
     ensure_data_dir()
+
+    start_daily_reset()
     cfg = load_config()
 
     # 验证配置
