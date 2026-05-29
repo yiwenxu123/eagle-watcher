@@ -22,6 +22,24 @@ _LOG = logging.getLogger("watcher")
 _processing_files: set[str] = set()
 
 
+def _is_processed(file_path: str) -> bool:
+    state = get_state_manager()
+    processed = state.get_processed_files()
+    try:
+        st = Path(file_path).stat()
+        key = f"{st.st_ino}:{st.st_size}"
+    except OSError:
+        return False
+    if key in processed:
+        _LOG.info("跳过已处理的文件: %s", Path(file_path).name)
+        return True
+    processed.add(key)
+    if len(processed) > 1000:
+        processed = set(list(processed)[-500:])
+    state.set_processed_files(processed)
+    return False
+
+
 def _check_result(result: dict, filename: str, theme: str, tags: list[str]):
     if result.get("status") == "success":
         theme_label = theme or "通用箱"
@@ -84,6 +102,9 @@ def _process_file(eagle: EagleAPI, file_path: str):
 def _on_file_detected(eagle: EagleAPI, file_path: str):
     global _processing_files
     if file_path in _processing_files:
+        return
+    if _is_processed(file_path):
+        _processing_files.add(file_path)
         return
     _processing_files.add(file_path)
 

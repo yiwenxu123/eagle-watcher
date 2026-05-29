@@ -73,6 +73,15 @@ class StateManager:
         with self._lock:
             self._state["current_theme"] = theme
 
+    def get_processed_files(self) -> set[str]:
+        with self._lock:
+            return set(self._state.get("processed_files", []))
+
+    def set_processed_files(self, files: set[str]):
+        with self._lock:
+            self._state["processed_files"] = list(files)
+            self._save()
+
 
 _instance: Optional[StateManager] = None
 _instance_lock = threading.Lock()
