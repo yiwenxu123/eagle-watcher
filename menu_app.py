@@ -209,14 +209,15 @@ class EagleWatcherMenu(rumps.App):
         items = []
         total = len(self._sort_items)
 
+        items.append(rumps.MenuItem("← 返回", callback=self._rebuild_menu))
+        items.append(None)
+
         if self._sort_index >= total:
-            items = [
+            items.extend([
                 rumps.MenuItem("✅ 整理完成"),
                 None,
-                rumps.MenuItem(f"确认 {self._sort_confirmed}  |  跳过 {self._sort_skipped}"),
-                None,
-                rumps.MenuItem("返回主菜单", callback=self._rebuild_menu),
-            ]
+                rumps.MenuItem(f"✅ 确认 {self._sort_confirmed}  |  ⏭️ 跳过 {self._sort_skipped}"),
+            ])
             self.menu = items
             self._refresh_status()
             return
@@ -240,9 +241,18 @@ class EagleWatcherMenu(rumps.App):
             items.append(rumps.MenuItem("💡 未匹配到已有主题"))
             items.append(None)
 
-        choose_item = rumps.MenuItem("🔄 选择其他主题")
-        choose_item.set_callback(lambda _: self._do_sort_choose(a, raw))
-        items.append(choose_item)
+        themes = get_theme_names()
+        if themes:
+            choose_menu = rumps.MenuItem("🔄 归入其他主题 ▸")
+            for t in themes:
+                t_item = rumps.MenuItem(t)
+                t_item.set_callback(lambda _, theme=t, aa=a, rr=raw: self._do_sort_theme(aa, rr, theme))
+                choose_menu.add(t_item)
+            items.append(choose_menu)
+        else:
+            new_item = rumps.MenuItem("➕ 创建主题并归入")
+            new_item.set_callback(lambda _: self._do_sort_create_theme(a, raw))
+            items.append(new_item)
 
         skip_item = rumps.MenuItem("⏭️ 跳过")
         skip_item.set_callback(lambda _: self._do_sort_skip())
@@ -258,35 +268,32 @@ class EagleWatcherMenu(rumps.App):
 
         self.menu = items
 
-    def _do_sort_confirm(self, a, raw):
-        if self._sort_service.confirm(
-            raw, a["suggested_theme"], a["suggested_tags"], a["filename"],
-        ):
+    def _do_sort_theme(self, a, raw, theme):
+        tags = a["suggested_tags"] if a["suggested_theme"] == theme else [theme]
+        if self._sort_service.confirm(raw, theme, tags, a["filename"]):
             self._sort_confirmed += 1
         else:
             self._sort_skipped += 1
         self._sort_index += 1
         self._show_sort_panel()
 
-    def _do_sort_choose(self, a, raw):
-        themes = get_theme_names()
-        default = a["suggested_theme"] if a["suggested_theme"] != "（未匹配）" else ""
-        win = rumps.Window(
-            message=f"可用主题：{'、'.join(themes)}\n\n输入主题名：",
-            title="选择主题",
-            default_text=default,
-            ok="确定",
-            cancel="取消",
-            dimensions=(320, 24),
-        )
-        resp = win.run()
-        if resp.clicked == 1 and resp.text.strip():
-            chosen = resp.text.strip()
-            tags = a["suggested_tags"] if chosen == a["suggested_theme"] else [chosen]
-            if self._sort_service.confirm(raw, chosen, tags, a["filename"]):
-                self._sort_confirmed += 1
-            else:
-                self._sort_skipped += 1
+    def _do_sort_create_theme(self, a, raw):
+        name = _input_text("创建主题", "输入新主题名称：")
+        if not name:
+            return
+        _create_theme(name)
+        if self._sort_service.confirm(raw, name, [name], a["filename"]):
+            self._sort_confirmed += 1
+        else:
+            self._sort_skipped += 1
+        self._sort_index += 1
+        self._show_sort_panel()
+
+    def _do_sort_confirm(self, a, raw):
+        if self._sort_service.confirm(
+            raw, a["suggested_theme"], a["suggested_tags"], a["filename"],
+        ):
+            self._sort_confirmed += 1
         else:
             self._sort_skipped += 1
         self._sort_index += 1
