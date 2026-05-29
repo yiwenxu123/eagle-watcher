@@ -62,6 +62,7 @@ if _HAS_FSEVENTS:
             self._run_loop = None
             self._stream_ref = None
             self._running = False
+            self._processing: set[str] = set()
 
             self._stream_ref = FSEventStreamCreate(
                 kCFAllocatorDefault,
@@ -97,19 +98,35 @@ if _HAS_FSEVENTS:
                     continue
 
                 if f_renamed or f_created:
+                    if file_path in self._processing:
+                        _LOG.debug("FSEvents 跳过重复: %s", filename)
+                        continue
+                    self._processing.add(file_path)
                     _LOG.debug("FSEvents: %s (created=%s renamed=%s)", filename, f_created, f_renamed)
                     self._dispatch(file_path)
 
         def _dispatch(self, file_path: str):
             if not os.path.exists(file_path):
+                self._processing.discard(file_path)
                 return
             if _wait_for_stable(file_path):
                 self._callback(file_path)
             else:
-                def retry():
-                    if _wait_for_stable(file_path, interval=1.0, checks=3):
-                        self._callback(file_path)
-                threading.Thread(target=retry, daemon=True).start()
+                _LOG.debug("文件不稳定，延迟重试: %s", os.path.basename(file_path))
+                threading.Thread(
+                    target=self._retry_until_stable,
+                    args=(file_path,),
+                    daemon=True,
+                ).start()
+
+        def _retry_until_stable(self, file_path: str, timeout: int = 30):
+            start = time.time()
+            while time.time() - start < timeout:
+                if _wait_for_stable(file_path, interval=0.5, checks=2):
+                    self._callback(file_path)
+                    return
+            _LOG.warning("文件稳定性超时: %s", os.path.basename(file_path))
+            self._processing.discard(file_path)
 
         def start(self):
             if self._running:

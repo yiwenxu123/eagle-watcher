@@ -4,6 +4,7 @@ Eagle HTTP API 封装
 """
 
 import json
+import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Optional
@@ -19,19 +20,24 @@ class EagleAPI:
         self.token = token
 
     def _url(self, path: str) -> str:
-        url = f"{self.base_url}/api/{path.lstrip('/')}"
-        if self.token:
-            url += f"?token={self.token}"
-        return url
+        return f"{self.base_url}/api/{path.lstrip('/')}"
 
     def _get(self, path: str, timeout: int = 30) -> dict:
-        resp = urllib.request.urlopen(self._url(path), timeout=timeout)
+        url = self._url(path)
+        if self.token:
+            sep = "&" if "?" in path else "?"
+            url += f"{sep}token={self.token}"
+        resp = urllib.request.urlopen(url, timeout=timeout)
         return json.loads(resp.read().decode())
 
     def _post(self, path: str, body: Optional[dict] = None, timeout: int = 30) -> dict:
+        url = self._url(path)
+        if self.token:
+            sep = "&" if "?" in path else "?"
+            url += f"{sep}token={self.token}"
         data = json.dumps(body or {}).encode()
         req = urllib.request.Request(
-            self._url(path),
+            url,
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -92,10 +98,16 @@ class EagleAPI:
 
     # ────────────── 素材查询 ──────────────
 
-    def list_items(self, folders: Optional[str] = None) -> list[dict]:
-        path = "item/list"
+    def list_items(self, folders: Optional[str] = None,
+                   tags: Optional[str] = None) -> list[dict]:
+        params = {}
         if folders:
-            path += f"?folders={folders}"
+            params["folders"] = folders
+        if tags:
+            params["tags"] = tags
+        path = "item/list"
+        if params:
+            path += "?" + urllib.parse.urlencode(params)
         data = self._get(path)
         return data.get("data", [])
 

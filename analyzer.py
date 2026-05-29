@@ -113,8 +113,8 @@ def decide(filename: str, source_url: str = "") -> dict:
         return {
             "action": "ai_analyze",
             "theme": None,
-            "tags": [],
-            "folder": "_通用箱",
+            "tags": ["待分类"],
+            "folder": None,
         }
 
     # 第五步：都不匹配 -> 进通用箱
@@ -123,5 +123,5 @@ def decide(filename: str, source_url: str = "") -> dict:
         "action": "inbox",
         "theme": None,
         "tags": ["待分类"],
-        "folder": "_通用箱",
+        "folder": None,
     }

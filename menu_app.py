@@ -1,5 +1,6 @@
 """菜单栏 App — rumps 扁平菜单"""
 import logging
+import queue
 import subprocess
 import threading
 from pathlib import Path
@@ -14,8 +15,6 @@ from eagle_api import EagleAPI
 from services.sort_service import SortService
 
 _LOG = logging.getLogger("menu")
-
-INBOX_NAMES = ["_通用箱", "通用箱", "_inbox", "inbox"]
 
 
 class EagleWatcherMenu(rumps.App):
@@ -135,12 +134,10 @@ class EagleWatcherMenu(rumps.App):
 
     def _refresh_status(self):
         try:
-            folders = self.eagle.list_folders()
-            inbox_id = None
-            for f in folders:
-                if f.get("name") in INBOX_NAMES:
-                    inbox_id = f.get("id")
-                    break
+            from datetime import datetime
+            today_date = datetime.now().strftime("%Y-%m-%d")
+            today_count = 0
+            inbox_count = 0
 
             all_items = []
             try:
@@ -148,26 +145,21 @@ class EagleWatcherMenu(rumps.App):
             except Exception:
                 pass
 
-            from datetime import datetime
-            today_date = datetime.now().strftime("%Y-%m-%d")
-            inbox_count = 0
-            today_count = 0
             for item in all_items:
                 btime = item.get("btime", 0) / 1000
                 if btime > 0:
                     if datetime.fromtimestamp(btime).strftime("%Y-%m-%d") == today_date:
                         today_count += 1
-                folders_list = item.get("folders", [])
-                if inbox_id and inbox_id in folders_list:
+                if "待分类" in item.get("tags", []):
                     inbox_count += 1
 
             _LOG.info(f"status: today={today_count} inbox={inbox_count}")
             self.today_item.title = f"📥 今日入库：{today_count}"
-            self.inbox_item.title = f"📦 通用箱：{inbox_count} 个待分类"
+            self.inbox_item.title = f"📦 待分类：{inbox_count} 个"
         except Exception as e:
             _LOG.warning(f"status error: {e}")
             self.today_item.title = "📥 今日入库：--"
-            self.inbox_item.title = "📦 通用箱：--"
+            self.inbox_item.title = "📦 待分类：--"
 
     # —— 打开 Eagle ——
 
@@ -186,102 +178,121 @@ class EagleWatcherMenu(rumps.App):
     # —— 通用箱整理 ——
 
     def _on_sort(self, _):
-        def _do():
-            _LOG.info("sort: start")
+        _LOG.info("sort: start")
+        sort_service = SortService(self.eagle)
+        result_q: queue.Queue = queue.Queue()
+
+        def fetch():
             try:
-                sort_service = SortService(self.eagle)
-
-                inbox_items = sort_service.get_inbox_items()
-                if inbox_items is None or len(inbox_items) == 0:
-                    rumps.alert(title="整理通用箱", message="通用箱里没有待分类素材 🎉")
+                items = sort_service.get_inbox_items()
+                if not items:
+                    result_q.put(("empty", None))
                     return
-
-                _LOG.info("sort: %d items to process", len(inbox_items))
-
-                analyzed_items = [sort_service.analyze(it) for it in inbox_items]
-
-                action = _dialog_sort_batch(len(analyzed_items))
-                if not action:
-                    return
-
-                confirmed = 0
-                skipped = 0
-
-                if action == "all_confirm":
-                    for a in analyzed_items:
-                        if a["suggested_theme"] == "（未匹配）":
-                            skipped += 1
-                            continue
-                        ok = sort_service.confirm(
-                            a["item"], a["suggested_theme"],
-                            a["suggested_tags"], a["filename"],
-                        )
-                        if ok:
-                            confirmed += 1
-                            _LOG.info("  ✅ %s → %s", a["filename"], a["suggested_theme"])
-
-                elif action == "by_theme":
-                    theme_groups: dict[str, list] = {}
-                    for a in analyzed_items:
-                        theme_groups.setdefault(a["suggested_theme"], []).append(a)
-
-                    for theme, items in theme_groups.items():
-                        if theme == "（未匹配）":
-                            skipped += len(items)
-                            continue
-                        filenames = [Path(a["filename"]).name for a in items[:10]]
-                        if len(items) > 10:
-                            filenames.append(f"...还有{len(items)-10}个")
-
-                        result = _dialog_confirm_theme(theme, filenames, len(items))
-                        if result:
-                            for a in items:
-                                if sort_service.confirm(
-                                    a["item"], theme, a["suggested_tags"], a["filename"],
-                                ):
-                                    confirmed += 1
-                                else:
-                                    skipped += 1
-                        else:
-                            skipped += len(items)
-
-                elif action == "one_by_one":
-                    themes = get_theme_names()
-                    for a in analyzed_items:
-                        result = _dialog_sort_single(
-                            Path(a["filename"]).name,
-                            a["suggested_theme"],
-                            ", ".join(a["suggested_tags"][:6]) if a["suggested_tags"] else "—",
-                            themes,
-                        )
-                        if result == "confirm":
-                            if sort_service.confirm(
-                                a["item"], a["suggested_theme"],
-                                a["suggested_tags"], a["filename"],
-                            ):
-                                confirmed += 1
-                            else:
-                                skipped += 1
-                        elif result and result not in ("skip", "cancel"):
-                            if sort_service.confirm(
-                                a["item"], result, [result], a["filename"],
-                            ):
-                                confirmed += 1
-                            else:
-                                skipped += 1
-                        else:
-                            skipped += 1
-
-                rumps.alert(
-                    title="整理完成",
-                    message=f"已标记 {confirmed} 个 | 跳过 {skipped} 个\n\n提示：素材已添加主题标签，可在 Eagle 中搜索",
-                )
-                _LOG.info("sort: done (confirmed=%d, skipped=%d)", confirmed, skipped)
+                analyzed = [sort_service.analyze(it) for it in items]
+                result_q.put(("loaded", analyzed))
             except Exception as e:
-                _LOG.warning("sort error: %s", e)
-                rumps.alert(title="整理失败", message=str(e))
+                _LOG.warning("sort fetch error: %s", e)
+                result_q.put(("error", str(e)))
 
-        threading.Thread(target=_do, daemon=True).start()
+        threading.Thread(target=fetch, daemon=True).start()
+
+        def check(timer):
+            try:
+                msg, data = result_q.get_nowait()
+            except queue.Empty:
+                return
+            timer.stop()
+
+            if msg == "empty":
+                rumps.alert(title="整理通用箱", message="通用箱里没有待分类素材 🎉")
+                return
+            if msg == "error":
+                rumps.alert(title="整理失败", message=data)
+                return
+
+            analyzed_items = data
+            self._run_sort_ui(sort_service, analyzed_items)
+
+        rumps.Timer(check, 0.1).start()
+
+    def _run_sort_ui(self, sort_service, analyzed_items):
+        action = _dialog_sort_batch(len(analyzed_items))
+        if not action:
+            return
+
+        confirmed = 0
+        skipped = 0
+
+        if action == "all_confirm":
+            for a in analyzed_items:
+                if a["suggested_theme"] == "（未匹配）":
+                    skipped += 1
+                    continue
+                ok = sort_service.confirm(
+                    a["item"], a["suggested_theme"],
+                    a["suggested_tags"], a["filename"],
+                )
+                if ok:
+                    confirmed += 1
+                else:
+                    skipped += 1
+
+        elif action == "by_theme":
+            theme_groups: dict[str, list] = {}
+            for a in analyzed_items:
+                theme_groups.setdefault(a["suggested_theme"], []).append(a)
+
+            for theme, items in theme_groups.items():
+                if theme == "（未匹配）":
+                    skipped += len(items)
+                    continue
+                filenames = [Path(a["filename"]).name for a in items[:10]]
+                if len(items) > 10:
+                    filenames.append(f"...还有{len(items)-10}个")
+                result = _dialog_confirm_theme(theme, filenames, len(items))
+                if result:
+                    for a in items:
+                        if sort_service.confirm(
+                            a["item"], theme, a["suggested_tags"], a["filename"],
+                        ):
+                            confirmed += 1
+                        else:
+                            skipped += 1
+                else:
+                    skipped += len(items)
+
+        elif action == "one_by_one":
+            themes = get_theme_names()
+            for a in analyzed_items:
+                result = _dialog_sort_single(
+                    Path(a["filename"]).name,
+                    a["suggested_theme"],
+                    ", ".join(a["suggested_tags"][:6]) if a["suggested_tags"] else "—",
+                    themes,
+                )
+                if result == "confirm":
+                    if sort_service.confirm(
+                        a["item"], a["suggested_theme"],
+                        a["suggested_tags"], a["filename"],
+                    ):
+                        confirmed += 1
+                    else:
+                        skipped += 1
+                elif result and result not in ("skip", "cancel"):
+                    if sort_service.confirm(
+                        a["item"], result, [result], a["filename"],
+                    ):
+                        confirmed += 1
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
+
+        rumps.alert(
+            title="整理完成",
+            message=f"已标记 {confirmed} 个 | 跳过 {skipped} 个\n\n提示：素材已添加主题标签，可在 Eagle 中搜索",
+        )
+        self._refresh_status()
 
     # —— 管理主题 ——
 

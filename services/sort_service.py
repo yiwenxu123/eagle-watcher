@@ -7,7 +7,7 @@ from eagle_api import EagleAPI
 
 _LOG = logging.getLogger("sort_service")
 
-INBOX_NAMES = ["_通用箱", "通用箱", "_inbox", "inbox"]
+UNSORTED_TAG = "待分类"
 
 
 class SortService:
@@ -15,18 +15,8 @@ class SortService:
     def __init__(self, eagle: EagleAPI):
         self.eagle = eagle
 
-    def get_inbox_id(self) -> Optional[str]:
-        folders = self.eagle.list_folders()
-        for f in folders:
-            if f.get("name") in INBOX_NAMES:
-                return f.get("id")
-        return None
-
     def get_inbox_items(self) -> list[dict]:
-        inbox_id = self.get_inbox_id()
-        if not inbox_id:
-            return []
-        return self.eagle.list_items(folders=inbox_id)
+        return self.eagle.list_items(tags=UNSORTED_TAG)
 
     def analyze(self, item: dict) -> dict:
         filename = f"{item['name']}.{item['ext']}"
@@ -50,7 +40,10 @@ class SortService:
     def confirm(self, item: dict, theme: str, tags: list[str],
                 filename: str) -> bool:
         try:
-            result = self.eagle.update_item(item["id"], tags=tags)
+            current_tags = item.get("tags", [])
+            new_tags = [t for t in current_tags if t != UNSORTED_TAG]
+            new_tags.extend(t for t in tags if t not in new_tags)
+            result = self.eagle.update_item(item["id"], tags=new_tags)
             if result.get("status") == "success":
                 record_match(filename, Path(filename).stem, theme, tags)
                 _LOG.info("已确认: %s → %s (%s)", filename, theme, tags)

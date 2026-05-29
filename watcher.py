@@ -19,6 +19,7 @@ from ai_tagger import analyze_image
 from notifier import notify
 
 _LOG = logging.getLogger("watcher")
+_processing_files: set[str] = set()
 
 
 def _check_result(result: dict, filename: str, theme: str, tags: list[str]):
@@ -39,8 +40,10 @@ def _process_file(eagle: EagleAPI, file_path: str):
     decision = decide(filename)
 
     folder_id = None
-    if decision["folder"]:
+    if decision.get("folder"):
         folder_id = eagle.get_or_create_folder(decision["folder"])
+
+    tags = list(decision.get("tags", []))
 
     if decision["action"] == "ai_analyze":
         print(f"  🤖 文件名模糊，Qwen-VL 分析中：{filename}")
@@ -52,7 +55,7 @@ def _process_file(eagle: EagleAPI, file_path: str):
             result = eagle.add_from_path(
                 file_path,
                 name=suggested_name,
-                tags=ai_tags,
+                tags=tags + ai_tags,
                 folder_id=folder_id,
             )
             _check_result(result, filename, decision.get("theme", ""), ai_tags)
@@ -60,13 +63,15 @@ def _process_file(eagle: EagleAPI, file_path: str):
             print(f"  ⚠️ AI 分析失败，暂存到通用箱")
             result = eagle.add_from_path(
                 file_path,
-                tags=["待AI识别"],
-                folder_id=folder_id or eagle.get_or_create_folder("_通用箱"),
+                tags=tags or ["待分类"],
+                folder_id=folder_id,
             )
-            _check_result(result, filename, decision.get("theme", ""), ["待AI识别"])
+            _check_result(result, filename, "", tags or ["待分类"])
         return
 
-    tags = decision["tags"]
+    if not tags:
+        tags = ["待分类"]
+
     result = eagle.add_from_path(
         file_path,
         name=Path(file_path).stem,
@@ -77,6 +82,11 @@ def _process_file(eagle: EagleAPI, file_path: str):
 
 
 def _on_file_detected(eagle: EagleAPI, file_path: str):
+    global _processing_files
+    if file_path in _processing_files:
+        return
+    _processing_files.add(file_path)
+
     filename = Path(file_path).name
     _LOG.info("检测到新文件：%s", filename)
     print(f"\n📥 检测到新文件：{filename}")
