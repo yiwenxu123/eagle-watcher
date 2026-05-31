@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+from eagle_watcher.ai_tagger import _get_api_key
 from eagle_watcher.config import (
     load_config, ensure_data_dir,
     get_categories, get_category_names, get_category_info,
@@ -148,6 +149,7 @@ class Handler(BaseHTTPRequestHandler):
             "today_count": today_count,
             "inbox_count": inbox_count,
             "last_processed": sm.get_last_processed(),
+            "ai_configured": bool(_get_api_key()),
         })
 
     # ────────── API: 项目操作 ──────────

@@ -28,7 +28,20 @@ CACHE_DIR = Path.home() / ".eagle-watcher" / "cache"
 
 
 def _get_api_key() -> Optional[str]:
-    return os.environ.get("DASHSCOPE_API_KEY")
+    # 优先从配置文件读取，其次是环境变量
+    try:
+        from eagle_watcher.config import load_config
+        cfg = load_config()
+        key = cfg.get("ai", {}).get("api_key", "")
+        if key:
+            _LOG.debug("AI API Key 从 config.yaml 读取")
+            return key
+    except Exception:
+        pass
+    key = os.environ.get("DASHSCOPE_API_KEY")
+    if key:
+        _LOG.debug("AI API Key 从环境变量读取")
+    return key
 
 
 def _get_image_hash(file_path: str) -> str:

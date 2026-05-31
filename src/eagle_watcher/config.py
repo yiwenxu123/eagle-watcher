@@ -43,6 +43,9 @@ def _default_config() -> dict:
             "inbox_reminder": True,
             "import_success": True,
         },
+        "ai": {
+            "api_key": "",
+        },
     }
 
 

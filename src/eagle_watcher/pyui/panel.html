@@ -39,6 +39,10 @@ tailwind.config = {
         <button id="pin-btn" onclick="togglePin()" class="text-sm opacity-40 hover:opacity-100 transition-opacity px-1" title="置顶">📌</button>
         <span id="eagle-badge" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Eagle ✓</span>
       </div>
+      <!-- AI 状态行 -->
+      <div class="flex items-center justify-center gap-2 mt-1">
+        <span id="ai-badge" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">AI: 未配置</span>
+      </div>
     </div>
 
     <!-- 状态卡片 -->
@@ -161,6 +165,15 @@ async function refresh() {
     const badge = $('eagle-badge');
     badge.textContent = online ? 'Eagle ✓' : 'Eagle ✗';
     badge.className = 'text-xs px-2 py-0.5 rounded-full ' + (online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600');
+
+    const aiBadge = $('ai-badge');
+    if (data.ai_configured) {
+      aiBadge.textContent = 'AI: 可用';
+      aiBadge.className = 'text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full';
+    } else {
+      aiBadge.textContent = 'AI: 未配置';
+      aiBadge.className = 'text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full';
+    }
 
     const sel = $('project-select');
     const cur = data.current_project;
