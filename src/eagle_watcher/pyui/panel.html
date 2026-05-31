@@ -378,7 +378,7 @@ async function loadInbox() {
           </div>
         </div>
         <div class="flex gap-1 flex-shrink-0">
-          <button onclick="confirmSort('${item.id}', '${item.suggested_theme || ''}', '${item.suggested_tags.join(',')}', '${(item.tags||[]).join(',')}')"
+          <button onclick="confirmSort('${item.id}', '${item.suggested_theme || ''}', '${item.suggested_tags.join(',')}', '${(item.tags||[]).join(',')}', '${item.name}')"
                   class="btn-primary text-[10px] px-2 py-1">✔</button>
           <button onclick="skipSort('${item.id}', '${(item.tags||[]).join(',')}')"
                   class="btn-secondary text-[10px] px-2 py-1">✗</button>
@@ -391,20 +391,15 @@ async function loadInbox() {
   }
 }
 
-async function confirmSort(id, theme, tagsStr, existingTagsStr) {
+async function confirmSort(id, theme, tagsStr, existingTagsStr, name) {
   const tags = tagsStr ? tagsStr.split(',').filter(Boolean) : [];
   const existing_tags = existingTagsStr ? existingTagsStr.split(',').filter(Boolean) : [];
   const folder = theme || undefined;
-  await api('POST', '/api/sort/confirm', { id, tags, existing_tags, folder });
+  await api('POST', '/api/sort/confirm', { id, tags, existing_tags, folder, name });
   // 从列表移除
   const el = $(`inbox-${id}`);
   if (el) el.remove();
-  const remaining = $('inbox-content').querySelectorAll('[id^="inbox-"]').length;
-  $('inbox-total').textContent = remaining;
-  if (remaining === 0) {
-    $('inbox-content').innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
-  }
-  // 更新状态统计
+  updateInboxCount();
   refresh();
 }
 

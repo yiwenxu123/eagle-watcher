@@ -18,7 +18,7 @@ from eagle_watcher.config import (
 )
 from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 from eagle_watcher.services.state_manager import get_state_manager
-from eagle_watcher.knowledge import match_by_filename
+from eagle_watcher.knowledge import match_by_filename, record_match
 
 _LOG = logging.getLogger("server")
 
@@ -283,6 +283,14 @@ class Handler(BaseHTTPRequestHandler):
                 new_tags.append(t)
         result = api.update_item(item_id, tags=new_tags)
         if result.get("status") == "success":
+            # 写入知识库
+            filename = body.get("name", "")
+            if filename and folder:
+                try:
+                    record_match(filename, Path(filename).stem, folder, incoming_tags)
+                    _LOG.info("知识库已学习: %s → %s", filename, folder)
+                except Exception as e:
+                    _LOG.warning("知识库写入失败: %s", e)
             self._send_json(200, {"ok": True})
         else:
             self._send_json(500, {"error": str(result)})
