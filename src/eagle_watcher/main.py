@@ -41,7 +41,7 @@ def start_daily_reset():
 
 
 def first_run_check() -> bool:
-    """首次运行检查，返回是否需要退出"""
+    """首次运行检查，返回是否需要阻止 watcher 启动"""
     if not CONFIG_PATH.exists():
         print("\n" + "=" * 55)
         print("  🖼  欢迎使用 Eagle 素材管家")
@@ -53,9 +53,16 @@ def first_run_check() -> bool:
         print(f"  2. 进入 Eagle → 偏好设置 → 插件")
         print(f"  3. 勾选「允许其他应用连接」")
         print(f"  4. 复制 API Token 到配置文件中的 eagle.token")
-        print(f"  5. 保存后重新运行：python main.py\n")
+        print(f"  5. 保存后重新运行配置引导：python main.py\n")
         save_config(_default_config())
-        return True
+        # 发送 macOS 通知
+        try:
+            from eagle_watcher.notifier import notify
+            notify("素材管家", "欢迎使用！请先配置 Eagle API Token：\n打开 Eagle → 偏好设置 → 插件 → 复制 Token")
+        except Exception:
+            pass
+        # 不再退出，继续启动 GUI
+        return False
     return False
 
 
