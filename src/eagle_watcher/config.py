@@ -2,6 +2,7 @@
 
 import logging
 import os
+import tempfile
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -47,8 +48,17 @@ def _default_config() -> dict:
 
 def save_config(cfg: dict):
     ensure_data_dir()
-    with open(CONFIG_PATH, "w") as f:
-        yaml.dump(cfg, f, allow_unicode=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True)
+        os.replace(tmp_path, str(CONFIG_PATH))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def get_current_theme() -> Optional[str]:
