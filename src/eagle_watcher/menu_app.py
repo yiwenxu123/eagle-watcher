@@ -35,6 +35,11 @@ class EagleWatcherMenu(rumps.App):
                 from eagle_watcher.pyui.server import start_server
                 start_server()
             except Exception as e:
+                try:
+                    from eagle_watcher.notifier import notify
+                    notify("素材管家", "⚠️ 面板服务器启动失败")
+                except Exception:
+                    pass
                 _LOG.error("HTTP server error: %s", e)
         self._http_thread = threading.Thread(target=_run, daemon=True)
         self._http_thread.start()
@@ -49,8 +54,8 @@ class EagleWatcherMenu(rumps.App):
             for item in AppKit.NSStatusBar.systemStatusBar().statusItems():
                 if item.title() != text:
                     item.setTitle_(text)
-        except Exception:
-            pass
+        except Exception as e:
+            _LOG.warning("AppKit status item update failed: %s", e)
 
     def _on_open(self, _):
         if self._panel is None:

@@ -75,7 +75,8 @@ class ImportHandler(BaseHTTPRequestHandler):
                 try:
                     folders = eagle.list_folders()
                     info["folders"] = [f["name"] for f in folders]
-                except Exception:
+                except Exception as e:
+                    _LOG.warning("Failed to fetch folder list: %s", e)
                     info["folders"] = []
             self._send_json(200, {"status": "ok", "data": info})
 

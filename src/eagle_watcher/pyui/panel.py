@@ -131,7 +131,9 @@ class FloatingPanel:
                         window.webkit.messageHandlers.pyuiLog.postMessage(
                             '[' + level + '] ' + Array.from(args).join(' ')
                         );
-                    } catch(e) {}
+                    } catch(e) {
+                        console.warn("[JS bridge] caught exception:", e);
+                    }
                     orig[level].apply(console, args);
                 }
                 console.log = function() { bridge('log', arguments); };
