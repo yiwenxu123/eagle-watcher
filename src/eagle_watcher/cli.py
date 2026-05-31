@@ -52,21 +52,22 @@ def main():
         project = args.project
         folder = args.folder or project
 
+    folder_id = None
     if folder:
-        eagle.get_or_create_folder(folder)
+        folder_id = eagle.get_or_create_folder(folder)
 
     if args.file:
         result = eagle.add_from_path(
             args.file,
             name=Path(args.file).stem,
             tags=tags,
-            folder_id=eagle.get_or_create_folder(folder) if folder else None,
+            folder_id=folder_id,
         )
     else:
         result = eagle.add_from_url(
             args.url,
             tags=tags,
-            folder_id=eagle.get_or_create_folder(folder) if folder else None,
+            folder_id=folder_id,
         )
 
     if result.get("status") == "success":
