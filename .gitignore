@@ -20,7 +20,12 @@ venv/
 .vscode/
 .idea/
 
-# Config (user-specific)
+# Config (user-specific) — 不跟踪，用户自行复制 config.yaml.example
 config.yaml
-# But keep template
-!config.yaml.template
+
+# AI development workflow (internal tools)
+.spec-workflow/
+.playwright-mcp/
+
+# Ad-hoc tests
+test_*.py

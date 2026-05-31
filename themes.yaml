@@ -1,17 +1,7 @@
-# 🏷 主题列表
+# 🏷 Eagle Watcher — 分类与项目配置模板
 # 复制到 ~/.eagle-watcher/themes.yaml
-# AI 不会自动创建新主题，只能匹配已有主题
+# 分类（categories）= Eagle 文件夹，一级分类
+# 项目（projects）= 标签方案，具体项目
 
-themes:
-  武安侯:
-    created_at: "2026-05-22"
-    default_tags: ["战国", "历史人物"]
-    eagle_folder: "武安侯"
-
-  秦始皇:
-    default_tags: ["秦朝", "皇帝"]
-    eagle_folder: "秦始皇"
-
-  海报参考:
-    default_tags: ["设计", "排版"]
-    eagle_folder: "海报参考"
+categories: {}
+projects: {}

@@ -1,0 +1,14 @@
+# ⚙️ Eagle Watcher — 设备配置模板
+# 复制为 ~/.eagle-watcher/config.yaml 后按需修改
+
+eagle:
+  host: "http://localhost:41595"
+  token: ""  # ← 必填：Eagle → 偏好设置 → 插件 → API Token
+
+paths:
+  downloads: "~/Downloads"          # 监控路径（支持 ~ 展开）
+  watch_interval: 2.0               # 监控轮询间隔（秒）
+
+notifications:
+  inbox_reminder: true              # 有待分类素材时通知
+  import_success: false             # 导入成功时通知

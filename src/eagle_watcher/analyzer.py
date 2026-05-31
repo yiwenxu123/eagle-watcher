@@ -3,12 +3,15 @@
 核心逻辑：设了主题 -> 强制归入；无主题 -> 知识库匹配 -> 通用箱
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 
-from config import get_current_theme, load_themes
-from knowledge import match_by_filename, match_by_source, record_miss
+from eagle_watcher.config import get_current_project, get_project_info
+from eagle_watcher.knowledge import match_by_filename, match_by_source, record_miss
+
+_LOG = logging.getLogger("analyzer")
 
 # 支持的图片扩展名
 IMAGE_EXTENSIONS = {
@@ -72,19 +75,22 @@ def decide(filename: str, source_url: str = "") -> dict:
     # 检查文件扩展名，非图片文件不进行 AI 分析
     is_image = is_image_file(filename)
 
-    # 第一步：用户手动设了主题？
-    current = get_current_theme()
+    # 第一步：用户手动设了项目？
+    current = get_current_project()
     if current:
-        themes = load_themes()
-        theme_info = themes.get("themes", {}).get(current, {})
-        default_tags = theme_info.get("default_tags", [])
-        keywords = extract_keywords(filename)
-        return {
-            "action": "import",
-            "theme": current,
-            "tags": default_tags + keywords,
-            "folder": theme_info.get("eagle_folder", current),
-        }
+        project_info = get_project_info(current)
+        if project_info:
+            default_tags = list(project_info.get("default_tags", []))
+            keywords = extract_keywords(filename)
+            if current not in default_tags:
+                default_tags = [current] + default_tags
+            return {
+                "action": "import",
+                "theme": current,
+                "tags": default_tags + keywords,
+                "folder": project_info.get("eagle_folder", current),
+            }
+        _LOG.warning("当前项目 '%s' 不存在，回退到自动匹配", current)
 
     # 第二步：按来源网站匹配？
     if source_url:

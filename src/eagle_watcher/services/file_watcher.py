@@ -20,6 +20,15 @@ def _is_temp(name: str) -> bool:
 
 def _wait_for_stable(file_path: str, interval: float = 0.5, checks: int = 2) -> bool:
     sizes = []
+    # 对大文件使用更严格的检查
+    try:
+        size = os.path.getsize(file_path)
+        if size > 10 * 1024 * 1024:
+            interval = 1.0
+            checks = 3
+    except OSError:
+        return False
+
     for _ in range(checks):
         try:
             sizes.append(os.path.getsize(file_path))
@@ -111,6 +120,7 @@ if _HAS_FSEVENTS:
                 return
             if _wait_for_stable(file_path):
                 self._callback(file_path)
+                self._processing.discard(file_path)
             else:
                 _LOG.debug("文件不稳定，延迟重试: %s", os.path.basename(file_path))
                 threading.Thread(
@@ -124,6 +134,7 @@ if _HAS_FSEVENTS:
             while time.time() - start < timeout:
                 if _wait_for_stable(file_path, interval=0.5, checks=2):
                     self._callback(file_path)
+                    self._processing.discard(file_path)
                     return
             _LOG.warning("文件稳定性超时: %s", os.path.basename(file_path))
             self._processing.discard(file_path)

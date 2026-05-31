@@ -120,6 +120,9 @@ class EagleAPI:
     def create_folder(self, folder_name: str) -> dict:
         return self._post("folder/create", {"folderName": folder_name})
 
+    def delete_folder(self, folder_id: str) -> dict:
+        return self._post("folder/delete", {"folderId": folder_id})
+
     def get_or_create_folder(self, folder_name: str) -> Optional[str]:
         folders = self.list_folders()
         for f in folders:
@@ -146,3 +149,19 @@ class EagleAPI:
             return resp.status < 500
         except Exception:
             return False
+
+
+def create_eagle_api(cfg: Optional[dict] = None) -> EagleAPI:
+    """工厂函数：从配置创建 EagleAPI 实例
+
+    Args:
+        cfg: 配置字典（需包含 eagle.host 和 eagle.token）。
+            为 None 时自动从 config.load_config() 加载。
+    """
+    if cfg is None:
+        from eagle_watcher.config import load_config
+        cfg = load_config()
+    return EagleAPI(
+        base_url=cfg["eagle"]["host"],
+        token=cfg["eagle"]["token"],
+    )

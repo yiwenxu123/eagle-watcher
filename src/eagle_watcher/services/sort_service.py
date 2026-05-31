@@ -2,8 +2,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from knowledge import match_by_filename, record_match
-from eagle_api import EagleAPI
+from eagle_watcher.knowledge import match_by_filename, record_match
+from eagle_watcher.eagle_api import EagleAPI
 
 _LOG = logging.getLogger("sort_service")
 

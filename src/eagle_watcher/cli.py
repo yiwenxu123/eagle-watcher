@@ -12,9 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import load_config, ensure_data_dir
-from eagle_api import EagleAPI
-from analyzer import decide
+from eagle_watcher.config import load_config, ensure_data_dir
+from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
+from eagle_watcher.analyzer import decide
 
 
 def main():
@@ -33,10 +33,7 @@ def main():
     ensure_data_dir()
     cfg = load_config()
 
-    eagle = EagleAPI(
-        base_url=cfg["eagle"]["host"],
-        token=cfg["eagle"]["token"],
-    )
+    eagle = create_eagle_api(cfg)
 
     if not eagle.ping():
         print("❌ Eagle 未运行，请先打开 Eagle")

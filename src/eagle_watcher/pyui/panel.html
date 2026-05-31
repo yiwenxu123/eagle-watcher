@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>素材管家</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        apple: { bg: '#f5f5f7', card: '#ffffff', text: '#1d1d1f', muted: '#86868b', blue: '#0071e3', border: '#d2d2d7', red: '#ff3b30', green: '#34c759' }
+      },
+      fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Helvetica Neue', 'sans-serif'] },
+      borderRadius: { apple: '10px' }
+    }
+  }
+}
+</script>
+<style>
+  body { -webkit-font-smoothing: antialiased; }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #c7c7cc; border-radius: 2px; }
+  .fade-in { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .btn-primary { @apply bg-apple-blue text-white rounded-lg px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity; }
+  .btn-secondary { @apply bg-gray-100 text-apple-text rounded-lg px-3 py-1.5 text-xs font-medium hover:bg-gray-200 transition-colors; }
+  .btn-danger { @apply bg-apple-red text-white rounded-lg px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity; }
+</style>
+</head>
+<body class="bg-apple-bg text-apple-text font-sans text-sm leading-relaxed select-none">
+  <div id="app" class="p-4 pt-7 space-y-3 max-h-[620px] overflow-y-auto scrollbar-thin fade-in">
+
+    <!-- 头部 -->
+    <div class="flex items-center justify-between mb-1">
+      <h1 class="text-base font-semibold tracking-tight">🖼 素材管家</h1>
+      <div class="flex items-center gap-1.5">
+        <button id="pin-btn" onclick="togglePin()" class="text-sm opacity-40 hover:opacity-100 transition-opacity px-1" title="置顶">📌</button>
+        <span id="eagle-badge" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Eagle ✓</span>
+      </div>
+    </div>
+
+    <!-- 状态卡片 -->
+    <div class="grid grid-cols-3 gap-2 text-center">
+      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold" id="stat-today">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide">今日入库</div>
+      </div>
+      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold" id="stat-inbox">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide">待分类</div>
+      </div>
+      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold" id="stat-last">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide">上次处理</div>
+      </div>
+    </div>
+
+    <!-- 当前主题 -->
+    <div class="bg-apple-card rounded-apple p-3 shadow-sm border border-apple-border space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="font-medium text-xs text-apple-muted uppercase tracking-wide">当前主题</span>
+        <button onclick="clearProject()" class="text-[11px] text-apple-blue hover:underline">取消</button>
+      </div>
+      <select id="project-select" onchange="switchProject(this.value)"
+              class="w-full text-sm bg-gray-50 border border-apple-border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+        <option>加载中...</option>
+      </select>
+    </div>
+
+    <!-- 操作按钮组 -->
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="openEagle()"
+              class="bg-apple-card border border-apple-border rounded-apple p-2.5 text-center
+                     hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
+        📂 打开 Eagle
+      </button>
+      <button onclick="refresh()"
+              class="bg-apple-card border border-apple-border rounded-apple p-2.5 text-center
+                     hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
+        🔄 刷新状态
+      </button>
+    </div>
+
+    <!-- 管理区 -->
+    <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors
+                     flex items-center justify-between">
+        <span>⚙️ 文件夹 & 主题管理</span>
+      </summary>
+      <div class="p-3 pt-2 border-t border-apple-border space-y-2">
+        <div class="flex gap-1.5 mb-2">
+          <button onclick="showCreate('category')" class="btn-primary">+ 新建文件夹</button>
+          <button onclick="showCreate('project')" class="btn-primary">+ 新建主题</button>
+        </div>
+        <div id="manage-content" class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin text-xs">
+          <p class="text-apple-muted">点击「刷新」加载...</p>
+        </div>
+        <!-- 内联表单 -->
+        <div id="inline-form" class="hidden border-t border-apple-border pt-2 space-y-1.5">
+          <input id="form-name" type="text" placeholder="名称" class="w-full text-xs border border-apple-border rounded-lg p-1.5 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+          <div id="form-extra" class="hidden">
+            <select id="form-category" class="w-full text-xs border border-apple-border rounded-lg p-1.5"></select>
+            <input id="form-tags" type="text" placeholder="标签（逗号分隔）" class="w-full text-xs border border-apple-border rounded-lg p-1.5 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+          </div>
+          <div class="flex gap-1.5 justify-end">
+            <button onclick="hideForm()" class="btn-secondary">取消</button>
+            <button id="form-submit" onclick="submitForm()" class="btn-primary">创建</button>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- 整理待分类 -->
+    <details id="inbox-section" class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors
+                     flex items-center justify-between">
+        <span>📦 整理待分类 (<span id="inbox-total">0</span>)</span>
+      </summary>
+      <div class="p-3 pt-2 border-t border-apple-border space-y-2 max-h-52 overflow-y-auto scrollbar-thin" id="inbox-content">
+        <p class="text-xs text-apple-muted">展开以加载...</p>
+      </div>
+    </details>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-3 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 whitespace-nowrap"></div>
+
+  </div>
+
+<script>
+const API = 'http://127.0.0.1:9800';
+
+function $(id) { return document.getElementById(id); }
+
+function api(method, path, body) {
+  return fetch(API + path, {
+    method,
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(r => r.json());
+}
+
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 2500);
+}
+
+// ────────── 状态刷新 ──────────
+
+async function refresh() {
+  try {
+    const data = await api('GET', '/api/status');
+    $('stat-today').textContent = data.today_count ?? '--';
+    $('stat-inbox').textContent = data.inbox_count ?? '--';
+    $('stat-last').textContent = data.last_processed ?? '--';
+
+    const online = data.eagle_online;
+    const badge = $('eagle-badge');
+    badge.textContent = online ? 'Eagle ✓' : 'Eagle ✗';
+    badge.className = 'text-xs px-2 py-0.5 rounded-full ' + (online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600');
+
+    const sel = $('project-select');
+    const cur = data.current_project;
+    const projects = data.projects || {};
+    const names = Object.keys(projects).sort();
+    sel.innerHTML = '<option value="">自动匹配</option>' +
+      names.map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>${n}</option>`).join('');
+
+    renderManage(data);
+    populateFormCategory(data);
+
+    // 如果 inbox section 已展开且已加载，刷新数据
+    if ($('inbox-section').hasAttribute('open') && $('inbox-content').dataset.loaded) {
+      loadInbox();
+    }
+  } catch (e) {
+    toast('⚠️ 刷新失败：无法连接服务器');
+    console.error('refresh error:', e);
+  }
+}
+
+// ────────── 管理区渲染 ──────────
+
+function renderManage(data) {
+  const cats = data.categories || {};
+  const catNames = Object.keys(cats);
+  const projects = data.projects || {};
+  const projNames = Object.keys(projects);
+
+  const mc = $('manage-content');
+  if (catNames.length === 0 && projNames.length === 0) {
+    mc.innerHTML = '<p class="text-apple-muted">暂无数据。先创建文件夹吧。</p>';
+    return;
+  }
+
+  const catHtml = catNames.map(cat => {
+    const info = cats[cat] || {};
+    const folder = info.eagle_folder || cat;
+    const fromEagle = info.from_eagle;
+    const icon = fromEagle ? (info.folder_id ? '📁' : '📂') : '🗂️';
+    const badge = fromEagle ? '<span class="text-[9px] bg-green-100 text-green-700 px-1 rounded ml-1">Eagle</span>' : '<span class="text-[9px] bg-gray-100 text-gray-500 px-1 rounded ml-1">本地</span>';
+    const projs = projNames.filter(n => (projects[n]?.category || '') === cat);
+    return `<div class="flex items-center justify-between py-1 border-b border-apple-border last:border-0">
+      <div class="min-w-0">
+        <span class="font-medium">${icon} ${cat}${badge}</span>
+        <span class="text-apple-muted ml-1 text-[10px]">→ ${folder}</span>
+        <div class="text-apple-muted text-[10px] truncate">${projs.map(p => `🏷️ ${p}`).join(', ')}</div>
+      </div>
+      ${!fromEagle ? `<button onclick="deleteCategory('${cat}')" class="text-apple-red hover:underline text-[11px] flex-shrink-0">删除</button>` : ''}
+    </div>`;
+  }).join('');
+
+  const orphanProjs = projNames.filter(n => !projects[n]?.category || !cats[projects[n].category]);
+  const orphanHtml = orphanProjs.length > 0
+    ? `<div class="pt-1"><span class="text-apple-muted text-[11px]">未关联分类：</span>${orphanProjs.map(p =>
+        `<span class="inline-flex items-center gap-1 ml-1">🏷️ ${p}
+          <button onclick="deleteProject('${p}')" class="text-apple-red hover:underline text-[11px]">✕</button>
+        </span>`).join('')}</div>`
+    : '';
+
+  mc.innerHTML = catHtml + orphanHtml;
+}
+
+// ────────── 分类/主题 CRUD ──────────
+
+let formMode = '';
+
+function showCreate(mode) {
+  formMode = mode;
+  $('form-name').value = '';
+  $('form-tags').value = '';
+  $('form-name').placeholder = mode === 'category' ? '文件夹名称' : '主题名称';
+
+  if (mode === 'project') {
+    $('form-extra').classList.remove('hidden');
+    populateFormCategory();
+  } else {
+    $('form-extra').classList.add('hidden');
+  }
+
+  $('form-submit').textContent = mode === 'category' ? '创建文件夹' : '创建主题';
+  $('inline-form').classList.remove('hidden');
+  $('form-name').focus();
+}
+
+function hideForm() {
+  $('inline-form').classList.add('hidden');
+  formMode = '';
+}
+
+function populateFormCategory(data) {
+  const cats = (data || {}).categories || {};
+  const sel = $('form-category');
+  const names = Object.keys(cats);
+  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
+}
+
+async function submitForm() {
+  const name = $('form-name').value.trim();
+  if (!name) return;
+
+  let result;
+  if (formMode === 'category') {
+    result = await api('POST', '/api/categories/create', { name });
+    if (result.ok) {
+      toast(result.eagle_folder_created
+        ? `✅ 已在 Eagle 创建文件夹「${name}」`
+        : `📂 文件夹「${name}」已保存（Eagle 未运行）`);
+    }
+  } else if (formMode === 'project') {
+    const category = $('form-category').value;
+    const tags = $('form-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+    result = await api('POST', '/api/projects/create', { name, category, tags });
+    if (result.ok) {
+      toast(result.knowledge_learned
+        ? `✅ 主题「${name}」已创建，文件名匹配已生效`
+        : `📁 主题「${name}」已保存`);
+    }
+  }
+
+  hideForm();
+  refresh();
+}
+
+async function deleteCategory(name) {
+  if (!confirm(`确定删除文件夹「${name}」及其所有主题？`)) return;
+  try {
+    const result = await api('POST', '/api/categories/delete', { name });
+    if (!result.ok && result.error) toast('⚠️ ' + result.error);
+    refresh();
+  } catch (e) {
+    toast('⚠️ 删除失败：网络错误');
+    console.error('deleteCategory error:', e);
+  }
+}
+
+async function deleteProject(name) {
+  if (!confirm(`确定删除主题「${name}」？`)) return;
+  try {
+    const result = await api('POST', '/api/projects/delete', { name });
+    if (!result.ok && result.error) toast('⚠️ ' + result.error);
+    refresh();
+  } catch (e) {
+    toast('⚠️ 删除失败：网络错误');
+    console.error('deleteProject error:', e);
+  }
+}
+
+// ────────── 主题切换 ──────────
+
+async function switchProject(value) {
+  await api('POST', '/api/current-project', { project: value || null });
+  refresh();
+}
+
+function clearProject() {
+  $('project-select').value = '';
+  switchProject('');
+}
+
+// ────────── 打开 Eagle ──────────
+
+async function openEagle() {
+  await api('POST', '/api/action', { action: 'open-eagle' });
+}
+
+// ────────── 置顶 ──────────
+
+let pinned = false;
+
+async function togglePin() {
+  pinned = !pinned;
+  await api('POST', '/api/set-pinned', { pinned });
+  $('pin-btn').style.opacity = pinned ? '1' : '0.5';
+  $('pin-btn').title = pinned ? '取消置顶' : '置顶';
+}
+
+// ────────── 整理待分类 ──────────
+
+async function loadInbox() {
+  const container = $('inbox-content');
+  try {
+    const data = await api('GET', '/api/inbox');
+    const items = data.items || [];
+    $('inbox-total').textContent = data.total ?? items.length;
+
+    if (items.length === 0) {
+      container.innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
+      container.dataset.loaded = '1';
+      return;
+    }
+
+    container.innerHTML = items.map(item => `
+      <div class="flex items-center gap-2 p-2 rounded-lg border border-apple-border bg-gray-50/50" id="inbox-${item.id}">
+        <img src="${item.thumbnail || ''}" class="w-8 h-8 rounded object-cover bg-gray-100 flex-shrink-0" alt=""
+             onerror="this.style.display='none'">
+        <div class="flex-1 min-w-0">
+          <div class="text-xs truncate font-medium">${item.name}</div>
+          <div class="text-[10px] text-apple-muted">
+            ${item.suggested_theme ? `→ ${item.suggested_theme}` : '未识别'}
+            ${item.suggested_tags.length ? ` (${item.suggested_tags.join(', ')})` : ''}
+          </div>
+        </div>
+        <div class="flex gap-1 flex-shrink-0">
+          <button onclick="confirmSort('${item.id}', '${item.suggested_theme || ''}', '${item.suggested_tags.join(',')}', '${(item.tags||[]).join(',')}')"
+                  class="btn-primary text-[10px] px-2 py-1">✔</button>
+          <button onclick="skipSort('${item.id}')"
+                  class="btn-secondary text-[10px] px-2 py-1">✗</button>
+        </div>
+      </div>
+    `).join('');
+    container.dataset.loaded = '1';
+  } catch (e) {
+    container.innerHTML = '<p class="text-xs text-apple-red">加载失败，请重试</p>';
+  }
+}
+
+async function confirmSort(id, theme, tagsStr, existingTagsStr) {
+  const tags = tagsStr ? tagsStr.split(',').filter(Boolean) : [];
+  const existing_tags = existingTagsStr ? existingTagsStr.split(',').filter(Boolean) : [];
+  const folder = theme || undefined;
+  await api('POST', '/api/sort/confirm', { id, tags, existing_tags, folder });
+  // 从列表移除
+  const el = $(`inbox-${id}`);
+  if (el) el.remove();
+  const remaining = $('inbox-content').querySelectorAll('[id^="inbox-"]').length;
+  $('inbox-total').textContent = remaining;
+  if (remaining === 0) {
+    $('inbox-content').innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
+  }
+  // 更新状态统计
+  refresh();
+}
+
+async function skipSort(id) {
+  const el = $(`inbox-${id}`);
+  if (el) el.remove();
+  const remaining = $('inbox-content').querySelectorAll('[id^="inbox-"]').length;
+  $('inbox-total').textContent = remaining;
+}
+
+// 展开 inbox 时自动加载
+document.addEventListener('DOMContentLoaded', () => {
+  const section = $('inbox-section');
+  section.querySelector('summary').addEventListener('click', (e) => {
+    // 等浏览器 toggle 完成后
+    setTimeout(() => {
+      if (section.hasAttribute('open') && !$('inbox-content').dataset.loaded) {
+        loadInbox();
+      }
+    }, 10);
+  });
+});
+
+// ────────── 初始化 ──────────
+
+refresh();
+// 自动刷新（不再整页重载）
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

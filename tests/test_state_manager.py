@@ -1,6 +1,6 @@
 import threading
 import time
-from services.state_manager import StateManager
+from eagle_watcher.services.state_manager import StateManager
 
 
 class TestStateManager:

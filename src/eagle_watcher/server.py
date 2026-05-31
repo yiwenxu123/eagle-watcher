@@ -22,9 +22,12 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
+import logging
 
-from config import load_config, ensure_data_dir
-from eagle_api import EagleAPI
+from eagle_watcher.config import load_config, ensure_data_dir
+
+_LOG = logging.getLogger("server")
+from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 
 HOST = "127.0.0.1"
 PORT = 9800
@@ -33,8 +36,7 @@ PORT = 9800
 class ImportHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
-        # 保持静默，不输出请求日志到 stderr
-        pass
+        _LOG.info("HTTP %s %s - %s", self.command, self.path, args[0] if args else '')
 
     def _send_json(self, status_code: int, body: dict):
         self.send_response(status_code)
@@ -44,10 +46,7 @@ class ImportHandler(BaseHTTPRequestHandler):
 
     def _get_eagle(self) -> Optional[EagleAPI]:
         cfg = load_config()
-        eagle = EagleAPI(
-            base_url=cfg["eagle"]["host"],
-            token=cfg["eagle"]["token"],
-        )
+        eagle = create_eagle_api(cfg)
         if not eagle.ping():
             self._send_json(503, {"status": "error", "message": "Eagle 未运行"})
             return None
@@ -59,23 +58,17 @@ class ImportHandler(BaseHTTPRequestHandler):
 
         if path == "/ping":
             cfg = load_config()
-            eagle = EagleAPI(
-                base_url=cfg["eagle"]["host"],
-                token=cfg["eagle"]["token"],
-            )
+            eagle = create_eagle_api(cfg)
             online = eagle.ping()
             self._send_json(200, {"status": "ok", "eagle_online": online})
 
         elif path == "/status":
             cfg = load_config()
-            eagle = EagleAPI(
-                base_url=cfg["eagle"]["host"],
-                token=cfg["eagle"]["token"],
-            )
-            from config import get_current_theme, get_theme_names
+            eagle = create_eagle_api(cfg)
+            from eagle_watcher.config import get_current_project, get_project_names
             info = {
-                "theme": get_current_theme(),
-                "themes": get_theme_names(),
+                "project": get_current_project(),
+                "projects": get_project_names(),
                 "eagle_online": eagle.ping(),
             }
             if eagle.ping():

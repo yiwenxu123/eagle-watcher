@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 
 @pytest.fixture(autouse=True)
 def mock_data_dir(tmp_path, monkeypatch):
-    from config import DATA_DIR as ORIGINAL
+    from eagle_watcher.config import DATA_DIR as ORIGINAL
 
     fake_dir = tmp_path / ".eagle-watcher"
     fake_dir.mkdir()
-    monkeypatch.setattr("config.DATA_DIR", fake_dir)
-    monkeypatch.setattr("services.state_manager.DATA_DIR", fake_dir)
-    monkeypatch.setattr("services.state_manager.STATE_PATH", fake_dir / "state.json")
-    monkeypatch.setattr("knowledge.DATA_DIR", fake_dir)
-    monkeypatch.setattr("knowledge.KNOWLEDGE_PATH", fake_dir / "knowledge.yaml")
+    monkeypatch.setattr("eagle_watcher.config.DATA_DIR", fake_dir)
+    monkeypatch.setattr("eagle_watcher.services.state_manager.DATA_DIR", fake_dir)
+    monkeypatch.setattr("eagle_watcher.services.state_manager.STATE_PATH", fake_dir / "state.json")
+    monkeypatch.setattr("eagle_watcher.knowledge.DATA_DIR", fake_dir)
+    monkeypatch.setattr("eagle_watcher.knowledge.KNOWLEDGE_PATH", fake_dir / "knowledge.yaml")
     return fake_dir
 
 

@@ -10,34 +10,25 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from config import load_config, ensure_data_dir
-from services.state_manager import get_state_manager
-from services.file_watcher import create_watcher
-from eagle_api import EagleAPI
-from analyzer import decide
-from ai_tagger import analyze_image
-from notifier import notify
+from eagle_watcher.config import load_config, ensure_data_dir
+from eagle_watcher.services.state_manager import get_state_manager
+from eagle_watcher.services.file_watcher import create_watcher
+from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
+from eagle_watcher.analyzer import decide
+from eagle_watcher.ai_tagger import analyze_image
+from eagle_watcher.notifier import notify
 
 _LOG = logging.getLogger("watcher")
 _processing_files: set[str] = set()
 
 
 def _is_processed(file_path: str) -> bool:
+    """检查文件是否已处理（原子操作，线程安全）"""
     state = get_state_manager()
-    processed = state.get_processed_files()
-    try:
-        st = Path(file_path).stat()
-        key = f"{st.st_ino}:{st.st_size}"
-    except OSError:
-        return False
-    if key in processed:
+    already_marked = not state.mark_file_processed(file_path)
+    if already_marked:
         _LOG.info("跳过已处理的文件: %s", Path(file_path).name)
-        return True
-    processed.add(key)
-    if len(processed) > 1000:
-        processed = set(list(processed)[-500:])
-    state.set_processed_files(processed)
-    return False
+    return already_marked
 
 
 def _check_result(result: dict, filename: str, theme: str, tags: list[str]):
@@ -45,10 +36,17 @@ def _check_result(result: dict, filename: str, theme: str, tags: list[str]):
         theme_label = theme or "通用箱"
         tag_str = ", ".join(tags)
         print(f"  ✅ {filename} → {theme_label} ｜ {tag_str}")
-        sm = get_state_manager()
-        if not theme and not sm.get_inbox_notified_today():
-            notify("素材管家", f"📦 通用箱有新素材：{filename}")
-            sm.set_inbox_notified_today(True)
+        if theme:
+            # Direct import with theme - notify if enabled
+            cfg = load_config()
+            if cfg.get("notifications", {}).get("import_success", False):
+                notify("素材管家", f"✅ {filename} → {theme_label}")
+        else:
+            # Inbox item - notify once per day
+            sm = get_state_manager()
+            if not sm.get_inbox_notified_today():
+                notify("素材管家", f"📦 通用箱有新素材：{filename}")
+                sm.set_inbox_notified_today(True)
     else:
         print(f"  ❌ 入库失败：{filename} — {result}")
 
@@ -116,6 +114,8 @@ def _on_file_detected(eagle: EagleAPI, file_path: str):
     except Exception as e:
         _LOG.error("处理文件失败：%s — %s", file_path, e)
         print(f"  ⚠️  处理失败：{filename} — {e}")
+    finally:
+        _processing_files.discard(file_path)
 
 
 def run_watcher(eagle: Optional[EagleAPI] = None):
@@ -123,10 +123,7 @@ def run_watcher(eagle: Optional[EagleAPI] = None):
     cfg = load_config()
 
     if eagle is None:
-        eagle = EagleAPI(
-            base_url=cfg["eagle"]["host"],
-            token=cfg["eagle"]["token"],
-        )
+        eagle = create_eagle_api(cfg)
 
     downloads_dir = cfg["paths"]["downloads"]
     if not Path(downloads_dir).is_dir():
@@ -155,10 +152,7 @@ def main():
     ensure_data_dir()
     cfg = load_config()
 
-    eagle = EagleAPI(
-        base_url=cfg["eagle"]["host"],
-        token=cfg["eagle"]["token"],
-    )
+    eagle = create_eagle_api(cfg)
 
     if not eagle.ping():
         print("❌ Eagle 未运行，请先打开 Eagle")
