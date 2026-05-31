@@ -119,6 +119,7 @@ def _on_file_detected(eagle: EagleAPI, file_path: str):
 
 
 def run_watcher(eagle: Optional[EagleAPI] = None):
+    get_state_manager().set_watcher_running(True)
     ensure_data_dir()
     cfg = load_config()
 

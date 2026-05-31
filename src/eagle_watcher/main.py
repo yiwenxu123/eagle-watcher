@@ -88,8 +88,10 @@ def main():
 
     if not eagle.ping():
         _LOG.warning("Eagle 未运行，菜单栏仍可启动但 watcher 暂停")
+        get_state_manager().set_eagle_online(False)
     else:
         _LOG.info("Eagle 连接正常，启动 watcher")
+        get_state_manager().set_eagle_online(True)
 
     from eagle_watcher.watcher import run_watcher
 

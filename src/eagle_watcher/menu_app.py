@@ -5,6 +5,7 @@ import threading
 import rumps
 
 from eagle_watcher.config import get_current_project
+from eagle_watcher.services.state_manager import get_state_manager
 
 _LOG = logging.getLogger("menu")
 
@@ -45,17 +46,11 @@ class EagleWatcherMenu(rumps.App):
         self._http_thread.start()
 
     def _tick(self, _):
+        sm = get_state_manager()
+        eagle_status = "🟢" if sm.get_eagle_online() else "🔴"
+        watcher_status = "🟢" if sm.get_watcher_running() else "🔴"
         cur = get_current_project()
-        text = f"📁 {cur or '自动匹配'}"
-        # 更新菜单栏标题（rumps.title 可能在低版本不生效，同时写 NSStatusItem）
-        self.title = text
-        try:
-            import AppKit
-            for item in AppKit.NSStatusBar.systemStatusBar().statusItems():
-                if item.title() != text:
-                    item.setTitle_(text)
-        except Exception as e:
-            _LOG.warning("AppKit status item update failed: %s", e)
+        self.title = f"{eagle_status} {watcher_status} {cur or '自动匹配'}"
 
     def _on_open(self, _):
         if self._panel is None:
