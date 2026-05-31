@@ -380,7 +380,7 @@ async function loadInbox() {
         <div class="flex gap-1 flex-shrink-0">
           <button onclick="confirmSort('${item.id}', '${item.suggested_theme || ''}', '${item.suggested_tags.join(',')}', '${(item.tags||[]).join(',')}')"
                   class="btn-primary text-[10px] px-2 py-1">✔</button>
-          <button onclick="skipSort('${item.id}')"
+          <button onclick="skipSort('${item.id}', '${(item.tags||[]).join(',')}')"
                   class="btn-secondary text-[10px] px-2 py-1">✗</button>
         </div>
       </div>
@@ -408,11 +408,26 @@ async function confirmSort(id, theme, tagsStr, existingTagsStr) {
   refresh();
 }
 
-async function skipSort(id) {
-  const el = $(`inbox-${id}`);
-  if (el) el.remove();
-  const remaining = $('inbox-content').querySelectorAll('[id^="inbox-"]').length;
+async function skipSort(id, existingTags) {
+  try {
+    const tags = existingTags ? existingTags.split(',').filter(Boolean) : [];
+    await api('POST', '/api/sort/skip', { id, existing_tags: tags });
+    const el = $(`inbox-${id}`);
+    if (el) el.remove();
+    updateInboxCount();
+    refresh();
+  } catch (e) {
+    toast('⚠️ 跳过失败：网络错误');
+    console.error('skipSort error:', e);
+  }
+}
+
+function updateInboxCount() {
+  const remaining = ($('inbox-content') || document).querySelectorAll('[id^="inbox-"]').length;
   $('inbox-total').textContent = remaining;
+  if (remaining === 0) {
+    $('inbox-content').innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
+  }
 }
 
 // 展开 inbox 时自动加载

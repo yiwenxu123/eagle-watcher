@@ -287,6 +287,25 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_json(500, {"error": str(result)})
 
+    def _handle_sort_skip(self, body: dict):
+        item_id = body.get("id", "").strip()
+        existing_tags = body.get("existing_tags", [])
+        if not item_id:
+            self._send_json(400, {"error": "id is required"})
+            return
+        api = self._eagle()
+        if not api:
+            return
+        # 移除"待分类"标签，添加"已跳过"标签
+        new_tags = [t for t in existing_tags if t != "待分类"]
+        if "已跳过" not in new_tags:
+            new_tags.append("已跳过")
+        result = api.update_item(item_id, tags=new_tags)
+        if result.get("status") == "success":
+            self._send_json(200, {"ok": True})
+        else:
+            self._send_json(500, {"error": str(result)})
+
     # ────────── API: 置顶 ──────────
 
     def _handle_set_pinned(self, body: dict):
@@ -352,6 +371,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sort_confirm(body)
             elif path == "/api/action":
                 self._handle_api_action(body)
+            elif path == "/api/sort/skip":
+                self._handle_sort_skip(body)
             elif path == "/api/set-pinned":
                 self._handle_set_pinned(body)
             else:
