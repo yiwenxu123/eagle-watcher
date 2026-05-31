@@ -36,7 +36,7 @@ tailwind.config = {
     <div class="flex items-center justify-between mb-1">
       <h1 class="text-base font-semibold tracking-tight">🖼 素材管家</h1>
       <div class="flex items-center gap-1.5">
-        <button id="pin-btn" onclick="togglePin()" class="text-sm opacity-40 hover:opacity-100 transition-opacity px-1" title="置顶">📌</button>
+        <button id="close-panel-btn" onclick="window.close()" class="text-sm opacity-40 hover:opacity-100 transition-opacity px-1" title="关闭 (Cmd+W)">✕</button>
         <span id="eagle-badge" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Eagle ✓</span>
       </div>
       <!-- AI 状态行 -->
@@ -338,17 +338,6 @@ function clearProject() {
 
 async function openEagle() {
   await api('POST', '/api/action', { action: 'open-eagle' });
-}
-
-// ────────── 置顶 ──────────
-
-let pinned = false;
-
-async function togglePin() {
-  pinned = !pinned;
-  await api('POST', '/api/set-pinned', { pinned });
-  $('pin-btn').style.opacity = pinned ? '1' : '0.5';
-  $('pin-btn').title = pinned ? '取消置顶' : '置顶';
 }
 
 // ────────── 整理待分类 ──────────

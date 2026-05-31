@@ -22,19 +22,6 @@ from eagle_watcher.knowledge import match_by_filename, record_match
 
 _LOG = logging.getLogger("server")
 
-# 置顶状态（panel.py 通过 import 读取）
-_pinned = False
-
-
-def is_pinned() -> bool:
-    return _pinned
-
-
-def set_pinned(v: bool) -> None:
-    global _pinned
-    _pinned = v
-    _LOG.info("Pin: %s", "enabled" if v else "disabled")
-
 HOST = "127.0.0.1"
 PORT = 9800
 
@@ -314,12 +301,6 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_json(500, {"error": str(result)})
 
-    # ────────── API: 置顶 ──────────
-
-    def _handle_set_pinned(self, body: dict):
-        set_pinned(body.get("pinned", False))
-        self._send_json(200, {"ok": True, "pinned": is_pinned()})
-
     # ────────── API: 系统动作 ──────────
 
     def _handle_api_action(self, body: dict):
@@ -381,8 +362,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_api_action(body)
             elif path == "/api/sort/skip":
                 self._handle_sort_skip(body)
-            elif path == "/api/set-pinned":
-                self._handle_set_pinned(body)
             else:
                 self._send_json(404, {"error": "not found"})
 

@@ -7,8 +7,6 @@ import WebKit
 from Foundation import NSObject, NSURL, NSURLRequest
 from WebKit import WKUserContentController, WKUserScript
 
-from eagle_watcher.pyui.server import is_pinned
-
 _LOG = logging.getLogger("pyui")
 
 PANEL_WIDTH = 420
@@ -55,16 +53,10 @@ class DragHandleView(AppKit.NSView):
         self._drag_start = current
 
 
-# 窗口委托：失去 key 状态时自动隐藏（置顶时夺回 key window）
+# 窗口委托：失去 key 状态时不隐藏（用户通过关闭按钮或 Cmd+W 关闭）
 class PanelDelegate(NSObject):
     def windowDidResignKey_(self, notification):
-        if is_pinned():
-            panel = notification.object()
-            AppKit.NSApp.activateIgnoringOtherApps_(True)
-            panel.makeKeyAndOrderFront_(None)
-            return
-        panel = notification.object()
-        panel.orderOut_(None)
+        pass
 
     def windowShouldClose_(self, sender):
         sender.orderOut_(None)
