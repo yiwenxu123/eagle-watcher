@@ -157,3 +157,42 @@ class TestStateManager:
 
         sm.reset_daily_flags()
         assert sm.get_inbox_notified_today() is False
+
+    # ── temp_watch_dirs ────────────────────────────────────
+
+    def test_temp_watch_dirs_default_empty(self, mock_data_dir):
+        """新 state 中 temp_watch_dirs 默认为空列表"""
+        sm = StateManager()
+        assert sm.get_temp_watch_dirs() == []
+
+    def test_add_temp_watch_dir(self, mock_data_dir):
+        """add_temp_watch_dir 添加新目录"""
+        sm = StateManager()
+        assert sm.add_temp_watch_dir("/tmp/test-dir") is True
+        assert "/tmp/test-dir" in sm.get_temp_watch_dirs()
+
+    def test_add_temp_watch_dir_dedup(self, mock_data_dir):
+        """重复添加同一目录返回 False 且只保留一个"""
+        sm = StateManager()
+        assert sm.add_temp_watch_dir("/tmp/test-dir") is True
+        assert sm.add_temp_watch_dir("/tmp/test-dir") is False
+        assert sm.get_temp_watch_dirs() == ["/tmp/test-dir"]
+
+    def test_remove_temp_watch_dir(self, mock_data_dir):
+        """remove_temp_watch_dir 移除目录"""
+        sm = StateManager()
+        sm.add_temp_watch_dir("/tmp/test-dir")
+        assert sm.remove_temp_watch_dir("/tmp/test-dir") is True
+        assert sm.get_temp_watch_dirs() == []
+
+    def test_remove_temp_watch_dir_not_found(self, mock_data_dir):
+        """移除不存在的目录返回 False"""
+        sm = StateManager()
+        assert sm.remove_temp_watch_dir("/tmp/nonexistent") is False
+
+    def test_temp_watch_dirs_persistence(self, mock_data_dir):
+        """set_temp_watch_dirs 写入后重读一致"""
+        sm = StateManager()
+        sm.set_temp_watch_dirs(["/tmp/a", "/tmp/b"])
+        sm2 = StateManager()
+        assert sm2.get_temp_watch_dirs() == ["/tmp/a", "/tmp/b"]

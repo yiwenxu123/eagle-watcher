@@ -58,6 +58,7 @@ class StateManager:
             "last_processed": None,
             "watcher_running": False,
             "eagle_online": False,
+            "temp_watch_dirs": [],
         }
 
     # ── 当前项目（取代旧 current_theme）──
@@ -217,6 +218,46 @@ class StateManager:
             state_copy["eagle_online"] = online
             self._state = state_copy
             self._save()
+
+
+    # ── 临时监控目录 ──
+
+    def get_temp_watch_dirs(self) -> list[str]:
+        with self._lock:
+            return list(self._state.get("temp_watch_dirs", []))
+
+    def set_temp_watch_dirs(self, dirs: list[str]):
+        with self._lock:
+            state_copy = dict(self._state)
+            state_copy["temp_watch_dirs"] = list(dirs)
+            self._state = state_copy
+            self._save()
+
+    def add_temp_watch_dir(self, path: str) -> bool:
+        """添加临时监控目录，已存在则跳过。返回 True 表示新增。"""
+        with self._lock:
+            dirs = list(self._state.get("temp_watch_dirs", []))
+            if path in dirs:
+                return False
+            dirs.append(path)
+            state_copy = dict(self._state)
+            state_copy["temp_watch_dirs"] = dirs
+            self._state = state_copy
+            self._save()
+            return True
+
+    def remove_temp_watch_dir(self, path: str) -> bool:
+        """移除临时监控目录。返回 True 表示确实删除了。"""
+        with self._lock:
+            dirs = list(self._state.get("temp_watch_dirs", []))
+            if path not in dirs:
+                return False
+            dirs.remove(path)
+            state_copy = dict(self._state)
+            state_copy["temp_watch_dirs"] = dirs
+            self._state = state_copy
+            self._save()
+            return True
 
 
 _instance: Optional[StateManager] = None

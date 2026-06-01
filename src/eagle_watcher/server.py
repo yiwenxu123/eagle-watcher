@@ -71,7 +71,7 @@ _panel_token_initialized = False
 
 
 def _get_watch_dirs_from_config() -> list[dict]:
-    """从配置读取所有监控目录信息"""
+    """从配置 + state 读取所有监控目录信息（config 目录 + 临时目录）"""
     cfg = load_config()
     dirs = []
     downloads = cfg.get("paths", {}).get("downloads", "")
@@ -91,6 +91,14 @@ def _get_watch_dirs_from_config() -> list[dict]:
                 "exists": Path(expanded).is_dir(),
                 "type": "extra",
             })
+    sm = get_state_manager()
+    for d in sm.get_temp_watch_dirs():
+        expanded = os.path.expanduser(d)
+        dirs.append({
+            "path": expanded,
+            "exists": Path(expanded).is_dir(),
+            "type": "temp",
+        })
     return dirs
 
 
@@ -701,6 +709,33 @@ class PanelHandler(BaseHandler):
         else:
             self._send_json(400, {"error": f"unknown action: {action}"})
 
+    # ────────── API: 临时监控目录管理 ──────────
+
+    def _handle_watch_dirs_add(self, body: dict):
+        path = body.get("path", "").strip()
+        if not path:
+            self._send_json(400, {"error": "path is required"})
+            return
+        expanded = os.path.expanduser(path)
+        if not Path(expanded).is_dir():
+            self._send_json(400, {"error": f"目录不存在: {expanded}", "path": expanded})
+            return
+        sm = get_state_manager()
+        added = sm.add_temp_watch_dir(expanded)
+        _invalidate_status_cache()
+        self._send_json(200, {"ok": True, "path": expanded, "added": added})
+
+    def _handle_watch_dirs_remove(self, body: dict):
+        path = body.get("path", "").strip()
+        if not path:
+            self._send_json(400, {"error": "path is required"})
+            return
+        expanded = os.path.expanduser(path)
+        sm = get_state_manager()
+        removed = sm.remove_temp_watch_dir(expanded)
+        _invalidate_status_cache()
+        self._send_json(200, {"ok": True, "path": expanded, "removed": removed})
+
     # ────────── API: AI 缓存管理 ──────────
 
     def _handle_ai_cache_clear(self):
@@ -841,6 +876,10 @@ class PanelHandler(BaseHandler):
                 self._handle_sort_skip(body)
             elif path == "/api/ai/cache/clear":
                 self._handle_ai_cache_clear()
+            elif path == "/api/watch-dirs/add":
+                self._handle_watch_dirs_add(body)
+            elif path == "/api/watch-dirs/remove":
+                self._handle_watch_dirs_remove(body)
             elif path == "/api/set-pinned":
                 self._handle_set_pinned(body)
             elif path == "/api/history/clear":

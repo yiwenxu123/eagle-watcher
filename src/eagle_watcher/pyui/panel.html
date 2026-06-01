@@ -137,6 +137,20 @@
       </div>
     </div>
 
+    <!-- 监控目录列表 -->
+    <div id="watch-dirs-section" class="hidden bg-apple-card rounded-apple shadow-sm border border-apple-border px-3 py-2">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[10px] text-apple-muted uppercase tracking-wide">📂 监控目录</span>
+      </div>
+      <div id="watch-dirs-list" class="space-y-0.5"></div>
+      <div class="flex gap-1 mt-1.5">
+        <input id="watch-dir-input" type="text" placeholder="输入临时目录路径…"
+               class="flex-1 text-[11px] bg-white border border-apple-border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-apple-blue/30"
+               onkeydown="if(event.key==='Enter')addWatchDir()">
+        <button onclick="addWatchDir()" class="text-[11px] text-apple-blue hover:text-apple-blue/70 px-2 whitespace-nowrap transition-colors">➕ 添加临时</button>
+      </div>
+    </div>
+
     <!-- 教AI认识新素材 — 当前主题 + 待分类整合区 -->
     <div class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
       <!-- 顶部：主题设置 -->
@@ -258,14 +272,32 @@ async function api(method, path, body) {
   }
 }
 
-function toast(msg) {
-  const el = $('toast');
-  el.textContent = msg;
-  el.style.opacity = '1';
-  setTimeout(() => { el.style.opacity = '0'; }, 2500);
+async function addWatchDir() {
+  const input = $('watch-dir-input');
+  const path = input.value.trim();
+  if (!path) { return; }
+  input.disabled = true;
+  try {
+    await api('POST', '/api/watch-dirs/add', {path});
+    input.value = '';
+    refresh();
+  } catch (e) {
+    alert(`添加失败: ${e.message}`);
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
 }
 
-// ────────── 状态刷新 ──────────
+async function removeWatchDir(path) {
+  if (!confirm(`确定停止监控并移除「${path}」？`)) return;
+  try {
+    await api('POST', '/api/watch-dirs/remove', {path});
+    refresh();
+  } catch (e) {
+    alert(`移除失败: ${e.message}`);
+  }
+}
 
 async function refresh() {
   try {
@@ -311,6 +343,28 @@ async function refresh() {
         if (pathEl) pathEl.textContent = data.permission_path || '';
       } else {
         permBanner.classList.add('hidden');
+      }
+    }
+
+    // 监控目录列表
+    const watchSection = $('watch-dirs-section');
+    const watchList = $('watch-dirs-list');
+    if (watchSection && watchList) {
+      const dirs = data.watch_dirs || [];
+      if (dirs.length > 0) {
+        watchSection.classList.remove('hidden');
+        watchList.innerHTML = dirs.map(d => {
+          const icon = d.exists ? '✅' : '❌';
+          const label = d.type === 'extra' ? '  (额外)' : '';
+          const parts = d.path.replace(/\/$/, '').split('/');
+          const short = parts.length > 2 ? '…/' + parts.slice(-2).join('/') : d.path;
+          const rmBtn = d.type === 'temp'
+            ? ` <a href="#" onclick="removeWatchDir('${d.path.replace(/'/g, "\\'")}');return false" class="text-red-400 hover:text-red-600 no-underline" title="移除临时目录">✕</a>`
+            : '';
+          return `<div class="text-[11px] text-apple-muted truncate flex items-center gap-1" title="${d.path}">${icon} <span class="flex-1 truncate">${short}${label}</span>${rmBtn}</div>`;
+        }).join('');
+      } else {
+        watchSection.classList.add('hidden');
       }
     }
 

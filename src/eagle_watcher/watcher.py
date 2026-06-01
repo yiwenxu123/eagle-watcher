@@ -211,11 +211,12 @@ def _on_file_detected(eagle: EagleAPI, file_path: str, attempt: int = 0):
         _processing_files.discard(file_path)
 
 
-def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None) -> list[str]:
+def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None,
+                        temp_dirs: Optional[list[str]] = None) -> list[str]:
     """解析需要监控的目录列表
 
-    合并 downloads + extra_watch_dirs (from config) + extra_dirs (from caller),
-    去重并过滤出不存在的目录。
+    合并 downloads + extra_watch_dirs (from config) + temp_dirs (from caller/state)
+    + extra_dirs (from caller)，去重并过滤出不存在的目录。
     """
     dirs: list[str] = []
     downloads = cfg.get("paths", {}).get("downloads", "")
@@ -237,6 +238,16 @@ def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None) -> li
             else:
                 _LOG.warning("额外监控目录不存在，跳过: %s", d)
 
+    if temp_dirs:
+        for d in temp_dirs:
+            expanded = os.path.expanduser(d)
+            if expanded in dirs:
+                continue
+            if Path(expanded).is_dir():
+                dirs.append(expanded)
+            else:
+                _LOG.warning("临时监控目录不存在，跳过: %s", d)
+
     if extra_dirs:
         for d in extra_dirs:
             expanded = os.path.expanduser(d)
@@ -250,6 +261,31 @@ def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None) -> li
     return dirs
 
 
+def _reconcile_watchers(watchers: dict, configured: set[str], callback, poll_interval: float,
+                        temp_dirs: Optional[list[str]] = None):
+    """从 state 同步临时监控目录，启动新 watcher、停止已移除的。"""
+    active_temp: set[str] = set()
+    if temp_dirs:
+        for d in temp_dirs:
+            expanded = os.path.expanduser(d)
+            if Path(expanded).is_dir():
+                active_temp.add(expanded)
+
+    expected = configured | active_temp
+    current = set(watchers.keys())
+
+    for d in current - expected:
+        watchers[d].stop()
+        del watchers[d]
+        _LOG.info("已停止监控目录: %s", d)
+
+    for d in expected - current:
+        w = create_watcher(d, callback, poll_interval=poll_interval)
+        w.start()
+        watchers[d] = w
+        print(f"👀 新监控已启动：{d}")
+
+
 def run_watcher(eagle: Optional[EagleAPI] = None,
                 extra_dirs: Optional[list[str]] = None):
     get_state_manager().set_watcher_running(True)
@@ -259,24 +295,30 @@ def run_watcher(eagle: Optional[EagleAPI] = None,
     if eagle is None:
         eagle = create_eagle_api(cfg)
 
-    watch_dirs = _resolve_watch_dirs(cfg, extra_dirs)
+    sm = get_state_manager()
+    watch_dirs = _resolve_watch_dirs(cfg, extra_dirs, temp_dirs=sm.get_temp_watch_dirs())
     if not watch_dirs:
         _LOG.error("没有有效的监控目录")
         print("❌ 没有有效的监控目录")
         return
 
+    poll_interval = cfg.get("paths", {}).get("watch_interval", 1.0)
+
     def callback(fp: str):
         _on_file_detected(eagle, fp)
 
-    poll_interval = cfg.get("paths", {}).get("watch_interval", 1.0)
-    watchers = []
+    # 启动初始目录（config + cli 传参），后续临时目录通过 reconcile 同步
+    configured_watch_dirs: set[str] = set()
+    watchers = {}
     for d in watch_dirs:
         w = create_watcher(d, callback, poll_interval=poll_interval)
         w.start()
-        watchers.append(w)
+        watchers[d] = w
+        configured_watch_dirs.add(d)
         print(f"👀 监控已启动：{d}")
 
     _last_cleanup_time = time.monotonic()
+    _last_reconcile_time = time.monotonic()
 
     try:
         while True:
@@ -291,8 +333,16 @@ def run_watcher(eagle: Optional[EagleAPI] = None,
                 else:
                     _LOG.warning("重试文件已不存在: %s", fp)
 
-            # 每分钟清理一次 _processing_files 中已不存在的文件
             now = time.monotonic()
+
+            # 每 30 秒同步临时监控目录（面板添加/移除的目录）
+            if now - _last_reconcile_time >= 30:
+                _last_reconcile_time = now
+                temp_dirs = get_state_manager().get_temp_watch_dirs()
+                _reconcile_watchers(watchers, configured_watch_dirs, callback,
+                                    poll_interval, temp_dirs=temp_dirs)
+
+            # 每分钟清理一次 _processing_files 中已不存在的文件
             if now - _last_cleanup_time >= 60:
                 _last_cleanup_time = now
                 stale = [fp for fp in list(_processing_files) if not os.path.exists(fp)]
@@ -303,7 +353,7 @@ def run_watcher(eagle: Optional[EagleAPI] = None,
     except KeyboardInterrupt:
         print("\n👋 停止监控")
     finally:
-        for w in watchers:
+        for w in watchers.values():
             w.stop()
 
 

@@ -27,8 +27,8 @@ config.yaml
 .spec-workflow/
 .playwright-mcp/
 
-# Ad-hoc tests
-test_*.py
+# Ad-hoc tests (only at repo root, not tests/ directory)
+/test_*.py
 
 # Coverage
 .coverage
