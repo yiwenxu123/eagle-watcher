@@ -9,9 +9,15 @@ from WebKit import WKUserContentController, WKUserScript
 
 _LOG = logging.getLogger("pyui")
 
+# 模块级引用，供 server.py HTTP handler 调用 set_pinned
+_current_panel: Optional['FloatingPanel'] = None
+
+# 线程安全的待处理 pin 状态（HTTP handler 存，主线程 _tick 消费）
+_pending_pinned: Optional[bool] = None
+
 PANEL_WIDTH = 420
 PANEL_HEIGHT = 640
-PANEL_URL = "http://localhost:9800/panel"
+PANEL_URL = "http://localhost:9801/panel"
 
 
 # NSPanel 子类：允许成为 key window（LSUIElement 模式下需要）
@@ -70,6 +76,8 @@ class FloatingPanel:
         self._panel: Optional[AppKit.NSPanel] = None
         self._webview: Optional[WebKit.WKWebView] = None
         self._delegate: Optional[PanelDelegate] = None
+        self._pinned: bool = False
+        self._need_refresh: bool = True  # 首次打开或 HTML 变更后需要刷新
 
     def _ensure_panel(self):
         if self._panel is not None:
@@ -79,8 +87,8 @@ class FloatingPanel:
             AppKit.NSMakeRect(0, 0, PANEL_WIDTH, PANEL_HEIGHT),
             AppKit.NSWindowStyleMaskTitled |
             AppKit.NSWindowStyleMaskFullSizeContentView |
-            AppKit.NSWindowStyleMaskBorderless |
             AppKit.NSWindowStyleMaskClosable |
+            AppKit.NSWindowStyleMaskMiniaturizable |
             AppKit.NSWindowStyleMaskResizable,
             AppKit.NSBackingStoreBuffered,
             False,
@@ -89,7 +97,8 @@ class FloatingPanel:
         panel.setTitlebarAppearsTransparent_(True)
         panel.setTitleVisibility_(AppKit.NSWindowTitleHidden)
         panel.setFloatingPanel_(True)
-        panel.setLevel_(AppKit.NSFloatingWindowLevel)
+        panel.setHidesOnDeactivate_(False)
+        panel.setLevel_(AppKit.NSNormalWindowLevel)  # 默认普通窗口层级；用户可置顶提升到 NSStatusWindowLevel
         panel.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
             AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
@@ -149,9 +158,9 @@ class FloatingPanel:
         )
         content.addSubview_(webview)
 
-        # 顶部拖拽把手（覆盖在 WKWebView 之上，18px 高，避开 traffic light 区域）
+        # 顶部拖拽把手（左侧避开 traffic light ~70px，右侧留 200px 给操作按钮）
         drag_handle = DragHandleView.alloc().initWithFrame_(
-            AppKit.NSMakeRect(40, PANEL_HEIGHT - 18, PANEL_WIDTH - 40, 18)
+            AppKit.NSMakeRect(70, PANEL_HEIGHT - 32, PANEL_WIDTH - 200, 32)
         )
         drag_handle.setAutoresizingMask_(
             AppKit.NSViewWidthSizable | AppKit.NSViewMinYMargin
@@ -166,18 +175,23 @@ class FloatingPanel:
         delegate = PanelDelegate.alloc().init()
         panel.setDelegate_(delegate)
 
+        global _current_panel
         self._panel = panel
         self._webview = webview
         self._delegate = delegate
+        _current_panel = self
         _LOG.info("FloatingPanel 已创建")
 
     def show(self):
         self._ensure_panel()
-        screen = AppKit.NSScreen.mainScreen().visibleFrame()
-        x = screen.size.width - PANEL_WIDTH - 16
-        y = screen.size.height - PANEL_HEIGHT - 10
-        self._panel.setFrameOrigin_(AppKit.NSMakePoint(x, y))
-        # 激活应用 + key + 显示，确保 WKWebView 可交互
+        # 首次打开或 HTML 变更后需要刷新页面，否则直接用缓存的
+        if self._need_refresh and self._webview:
+            self.refresh()
+            self._need_refresh = False
+        self._panel.setFrameOrigin_(AppKit.NSMakePoint(
+            AppKit.NSScreen.mainScreen().visibleFrame().size.width - PANEL_WIDTH - 16,
+            AppKit.NSScreen.mainScreen().visibleFrame().size.height - PANEL_HEIGHT - 10,
+        ))
         AppKit.NSApp.activateIgnoringOtherApps_(True)
         self._panel.makeKeyAndOrderFront_(None)
 
@@ -187,7 +201,13 @@ class FloatingPanel:
 
     def toggle(self):
         if self._panel and self._panel.isVisible():
-            self.hide()
+            if self._panel.isKeyWindow():
+                # 已在前台 → 隐藏
+                self.hide()
+            else:
+                # 在后台但可见 → 提到前台
+                AppKit.NSApp.activateIgnoringOtherApps_(True)
+                self._panel.makeKeyAndOrderFront_(None)
         else:
             self.show()
 
@@ -199,3 +219,41 @@ class FloatingPanel:
 
     def is_visible(self) -> bool:
         return self._panel is not None and self._panel.isVisible()
+
+    def set_pinned(self, pinned: bool):
+        self._pinned = pinned
+        if self._panel:
+            new_level = AppKit.NSStatusWindowLevel if pinned else AppKit.NSFloatingWindowLevel
+            self._panel.setLevel_(new_level)
+            self._panel.setHidesOnDeactivate_(not pinned)
+            if not pinned:
+                AppKit.NSApp.activateIgnoringOtherApps_(True)
+                self._panel.makeKeyAndOrderFront_(None)
+            _LOG.info("面板置顶: %s (level=%s)", pinned, new_level)
+
+
+def set_pinned(pinned: bool):
+    """HTTP handler 调用的模块级函数（后台线程安全，不调用 AppKit）"""
+    global _pending_pinned
+    _pending_pinned = pinned
+
+
+def apply_pending_pinned():
+    """在主线程调用，消费 _pending_pinned 并实际修改窗口层级"""
+    global _pending_pinned
+    if _pending_pinned is not None:
+        pinned = _pending_pinned
+        _pending_pinned = None
+        global _current_panel
+        if _current_panel is not None:
+            _current_panel._pinned = pinned
+            if _current_panel._panel:
+                new_level = AppKit.NSStatusWindowLevel if pinned else AppKit.NSFloatingWindowLevel
+                _current_panel._panel.setLevel_(new_level)
+                # 置顶时：不因应用切换而隐藏；取消置顶时：恢复默认
+                _current_panel._panel.setHidesOnDeactivate_(not pinned)
+                if pinned:
+                    # 置顶时提到前台让用户看到效果
+                    AppKit.NSApp.activateIgnoringOtherApps_(True)
+                    _current_panel._panel.makeKeyAndOrderFront_(None)
+                _LOG.info("面板置顶: %s (level=%s)", pinned, new_level)

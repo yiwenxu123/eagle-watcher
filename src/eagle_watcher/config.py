@@ -3,6 +3,7 @@
 import logging
 import os
 import tempfile
+import threading
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,8 @@ from typing import Optional
 from eagle_watcher.services.state_manager import get_state_manager
 
 _LOG = logging.getLogger("config")
+_themes_lock = threading.Lock()
+_config_lock = threading.Lock()
 
 DATA_DIR = Path.home() / ".eagle-watcher"
 CONFIG_PATH = DATA_DIR / "config.yaml"
@@ -22,11 +25,16 @@ def ensure_data_dir():
 
 
 def load_config() -> dict:
-    ensure_data_dir()
-    if not CONFIG_PATH.exists():
-        return _default_config()
-    with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f) or _default_config()
+    with _config_lock:
+        ensure_data_dir()
+        if not CONFIG_PATH.exists():
+            return _default_config()
+        try:
+            with open(CONFIG_PATH) as f:
+                return yaml.safe_load(f) or _default_config()
+        except Exception:
+            _LOG.warning("config.yaml 读取失败，使用默认配置")
+            return _default_config()
 
 
 def _default_config() -> dict:
@@ -39,6 +47,7 @@ def _default_config() -> dict:
             "downloads": str(Path.home() / "Downloads"),
             "watch_interval": 2.0,
         },
+        "delete_after_import": "trash",
         "notifications": {
             "inbox_reminder": True,
             "import_success": True,
@@ -46,32 +55,26 @@ def _default_config() -> dict:
         "ai": {
             "api_key": "",
         },
+        "server": {
+            "api_key": "",
+        },
     }
 
 
 def save_config(cfg: dict):
-    ensure_data_dir()
-    fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".yaml.tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, allow_unicode=True)
-        os.replace(tmp_path, str(CONFIG_PATH))
-    except Exception:
+    with _config_lock:
+        ensure_data_dir()
+        fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".yaml.tmp")
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def get_current_theme() -> Optional[str]:
-    """【兼容旧版】等同于 get_current_project()"""
-    return get_current_project()
-
-
-def set_current_theme(theme: Optional[str]):
-    """【兼容旧版】等同于 set_current_project()"""
-    set_current_project(theme)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, allow_unicode=True)
+            os.replace(tmp_path, str(CONFIG_PATH))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # ────────── themes.yaml（主题列表）──────────
@@ -80,8 +83,12 @@ def load_themes() -> dict:
     ensure_data_dir()
     if not THEMES_PATH.exists():
         return {"categories": {}, "projects": {}}
-    with open(THEMES_PATH) as f:
-        data = yaml.safe_load(f) or {"categories": {}, "projects": {}}
+    try:
+        with open(THEMES_PATH) as f:
+            data = yaml.safe_load(f) or {"categories": {}, "projects": {}}
+    except Exception:
+        _LOG.warning("themes.yaml 读取失败，使用默认配置")
+        return {"categories": {}, "projects": {}}
 
     # 自动迁移旧格式（只有 themes 键，没有 categories/projects）
     if "themes" in data and "categories" not in data and "projects" not in data:
@@ -104,23 +111,35 @@ def load_themes() -> dict:
 
 def save_themes(data: dict):
     ensure_data_dir()
-    with open(THEMES_PATH, "w") as f:
-        yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+    fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+        os.replace(tmp_path, str(THEMES_PATH))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
-def get_theme_names() -> list[str]:
-    """【兼容旧版】返回项目名称列表"""
-    return get_project_names()
-
-
-def validate_config(cfg: dict) -> list[str]:
-    """验证配置文件，返回错误列表"""
-    errors = []
+def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
+    """验证配置文件，返回 (errors, warnings) 元组"""
+    errors: list[str] = []
+    warnings: list[str] = []
 
     # 验证 Eagle 配置
     eagle_cfg = cfg.get("eagle", {})
     if not eagle_cfg.get("host"):
         errors.append("缺少 eagle.host 配置")
+    if not eagle_cfg.get("token"):
+        warnings.append("缺少 eagle.token 配置，请在 Eagle 偏好设置 → 插件中获取")
+
+    # 验证 AI 配置
+    ai_cfg = cfg.get("ai", {})
+    if not ai_cfg.get("api_key"):
+        _LOG.warning("ai.api_key 未配置，AI 视觉分析不可用")
 
     # 验证路径配置
     paths_cfg = cfg.get("paths", {})
@@ -136,7 +155,7 @@ def validate_config(cfg: dict) -> list[str]:
     if not isinstance(interval, (int, float)) or interval <= 0:
         errors.append(f"监控间隔配置无效：{interval}")
 
-    return errors
+    return errors, warnings
 
 
 # ────────── 分类管理（categories = Eagle 文件夹）──────────
@@ -155,9 +174,10 @@ def get_category_info(name: str) -> Optional[dict]:
 
 
 def save_categories(data: dict):
-    themes = load_themes()
-    themes["categories"] = data
-    save_themes(themes)
+    with _themes_lock:
+        themes = load_themes()
+        themes["categories"] = data
+        save_themes(themes)
 
 
 def create_category(name: str, eagle_folder: Optional[str] = None,
@@ -204,9 +224,10 @@ def get_project_info(name: str) -> Optional[dict]:
 
 
 def save_projects(data: dict):
-    themes = load_themes()
-    themes["projects"] = data
-    save_themes(themes)
+    with _themes_lock:
+        themes = load_themes()
+        themes["projects"] = data
+        save_themes(themes)
 
 
 def create_project(name: str, category: str, tags: Optional[list[str]] = None):

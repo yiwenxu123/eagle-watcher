@@ -13,11 +13,17 @@ import sys
 from pathlib import Path
 
 from eagle_watcher.config import load_config, ensure_data_dir
-from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
+from eagle_watcher.eagle_api import create_eagle_api
 from eagle_watcher.analyzer import decide
 
 
 def main():
+    try:
+        from eagle_watcher._logging import setup_logging
+        setup_logging("eagle-import")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="导入素材到 Eagle")
     parser.add_argument("--file", help="本地文件路径")
     parser.add_argument("--url", help="远程文件 URL")

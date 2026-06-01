@@ -1,11 +1,19 @@
 import json
 import logging
+import os
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 _LOG = logging.getLogger("state")
+
+from eagle_watcher._constants import MAX_PROCESSED_FILES, TRIM_KEEP_COUNT
+
+# Keep local fallback for import resilience
+_MAX_PROCESSED_FILES = 1000
+_TRIM_KEEP_COUNT = 500
 
 DATA_DIR = Path.home() / ".eagle-watcher"
 STATE_PATH = DATA_DIR / "state.json"
@@ -14,7 +22,7 @@ STATE_PATH = DATA_DIR / "state.json"
 class StateManager:
 
     def __init__(self):
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
         self._state: dict = self._load()
 
     def _load(self) -> dict:
@@ -28,8 +36,17 @@ class StateManager:
 
     def _save(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with open(STATE_PATH, "w") as f:
-            json.dump(self._state, f, ensure_ascii=False, indent=2)
+        fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".json.tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._state, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, str(STATE_PATH))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _default() -> dict:
@@ -51,9 +68,11 @@ class StateManager:
 
     def set_current_project(self, name: Optional[str]):
         with self._lock:
-            self._state["current_project"] = name
-            self._state["current_theme"] = name  # keep legacy field in sync
-            self._state["set_at"] = datetime.now().isoformat()
+            state_copy = dict(self._state)
+            state_copy["current_project"] = name
+            state_copy["current_theme"] = name  # keep legacy field in sync
+            state_copy["set_at"] = datetime.now().isoformat()
+            self._state = state_copy
             self._save()
 
     # ── 向后兼容：旧 get/set_current_theme 别名 ──
@@ -72,15 +91,35 @@ class StateManager:
 
     def set_inbox_notified_today(self, value: bool):
         with self._lock:
-            self._state["inbox_notified_today"] = value
+            state_copy = dict(self._state)
+            state_copy["inbox_notified_today"] = value
+            self._state = state_copy
             self._save()
+
+    def check_and_set_inbox_notified(self) -> bool:
+        """
+        原子化检查并设置 inbox_notified_today.
+        返回 True 表示这是首次通知（调用方应发送通知），
+        返回 False 表示今天已经通知过。
+        """
+        with self._lock:
+            state_copy = dict(self._state)
+            if state_copy.get("inbox_notified_today", False):
+                return False
+            state_copy["inbox_notified_today"] = True
+            self._state = state_copy
+            self._save()
+            return True
 
     def reset_daily_flags(self):
         with self._lock:
-            if self._state.get("inbox_notified_today"):
-                self._state["inbox_notified_today"] = False
-                self._save()
-                _LOG.info("每日标志已重置")
+            if not self._state.get("inbox_notified_today"):
+                return
+            state_copy = dict(self._state)
+            state_copy["inbox_notified_today"] = False
+            self._state = state_copy
+            self._save()
+            _LOG.info("每日标志已重置")
 
     # ── 状态查询 ──
 
@@ -90,8 +129,11 @@ class StateManager:
 
     def set_state_from_server(self, project: Optional[str]):
         with self._lock:
-            self._state["current_project"] = project
-            self._state["current_theme"] = project
+            state_copy = dict(self._state)
+            state_copy["current_project"] = project
+            state_copy["current_theme"] = project
+            self._state = state_copy
+            self._save()
 
     # ── 已处理文件 ──
 
@@ -99,32 +141,44 @@ class StateManager:
         with self._lock:
             return set(self._state.get("processed_files", []))
 
-    def set_processed_files(self, files: set[str]):
-        with self._lock:
-            self._state["processed_files"] = list(files)
-            self._save()
-
-    def mark_file_processed(self, file_path: str) -> bool:
-        """原子化检查并标记文件为已处理。
-
-        返回 True 表示该文件首次被标记（即需要处理），
-        返回 False 表示该文件已被标记过（跳过处理）。
-        此方法在锁内完成 check-and-set，避免 TOCTOU 竞态。
-        """
-        from pathlib import Path
+    def is_file_processed(self, file_path: str) -> bool:
+        """只读检查文件是否已处理，不修改状态。"""
         with self._lock:
             processed = set(self._state.get("processed_files", []))
             try:
                 st = Path(file_path).stat()
                 key = f"{st.st_ino}:{st.st_size}"
             except OSError:
-                return False  # 无法读取文件信息，保守返回"已处理"
+                return False
+            return key in processed
+
+    def set_processed_files(self, files: set[str]):
+        with self._lock:
+            state_copy = dict(self._state)
+            state_copy["processed_files"] = list(files)
+            self._state = state_copy
+            self._save()
+
+    def mark_file_processed(self, file_path: str) -> bool:
+        """原子化检查并标记文件为已处理。
+        返回 True 表示该文件首次被标记（即需要处理），
+        返回 False 表示该文件已被标记过（跳过处理）。
+        """
+        with self._lock:
+            processed = set(self._state.get("processed_files", []))
+            try:
+                st = Path(file_path).stat()
+                key = f"{st.st_ino}:{st.st_size}"
+            except OSError:
+                return True  # 无法读取文件信息，返回 True 让调用方重试
             if key in processed:
                 return False  # 已处理过
             processed.add(key)
-            if len(processed) > 1000:
-                processed = set(list(processed)[-500:])
-            self._state["processed_files"] = list(processed)
+            if len(processed) > MAX_PROCESSED_FILES:
+                processed = set(sorted(processed)[-TRIM_KEEP_COUNT:])
+            state_copy = dict(self._state)
+            state_copy["processed_files"] = list(processed)
+            self._state = state_copy
             self._save()
             return True
 
@@ -137,7 +191,9 @@ class StateManager:
 
     def set_last_processed(self, info: dict):
         with self._lock:
-            self._state["last_processed"] = info
+            state_copy = dict(self._state)
+            state_copy["last_processed"] = info
+            self._state = state_copy
             self._save()
 
     def get_watcher_running(self) -> bool:
@@ -146,7 +202,9 @@ class StateManager:
 
     def set_watcher_running(self, running: bool):
         with self._lock:
-            self._state["watcher_running"] = running
+            state_copy = dict(self._state)
+            state_copy["watcher_running"] = running
+            self._state = state_copy
             self._save()
 
     def get_eagle_online(self) -> bool:
@@ -155,7 +213,9 @@ class StateManager:
 
     def set_eagle_online(self, online: bool):
         with self._lock:
-            self._state["eagle_online"] = online
+            state_copy = dict(self._state)
+            state_copy["eagle_online"] = online
+            self._state = state_copy
             self._save()
 
 

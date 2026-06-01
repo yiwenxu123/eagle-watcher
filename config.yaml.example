@@ -12,3 +12,7 @@ paths:
 notifications:
   inbox_reminder: true              # 有待分类素材时通知
   import_success: false             # 导入成功时通知
+
+ai:
+  api_key: ""                       # ← DashScope API Key（Qwen-VL 视觉分析用）
+  model: "qwen-vl-max"              # 模型名称

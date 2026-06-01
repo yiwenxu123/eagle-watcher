@@ -1,5 +1,6 @@
 import threading
 import time
+from pathlib import Path
 from eagle_watcher.services.state_manager import StateManager
 
 
@@ -25,7 +26,7 @@ class TestStateManager:
         sm.reset_daily_flags()
         assert sm.get_inbox_notified_today() is False
 
-    def test_server_method_does_not_persist(self, mock_data_dir):
+    def test_server_method_persists(self, mock_data_dir):
         sm = StateManager()
         sm.set_current_theme("武安侯")
 
@@ -33,7 +34,7 @@ class TestStateManager:
         assert sm.get_current_theme() == "_temp"
 
         sm2 = StateManager()
-        assert sm2.get_current_theme() == "武安侯"
+        assert sm2.get_current_theme() == "_temp"
 
     def test_concurrent_access(self, mock_data_dir):
         sm = StateManager()
@@ -59,3 +60,100 @@ class TestStateManager:
 
         sm2 = StateManager()
         assert sm2.get_current_theme() == "秦始皇"
+
+    def test_get_all_state_returns_copy(self, mock_data_dir):
+        sm = StateManager()
+        sm.set_current_theme("武安侯")
+        state1 = sm.get_all_state()
+        state2 = sm.get_all_state()
+
+        assert state1 == state2
+        state1["current_project"] = "篡改值"
+        assert sm.get_current_theme() == "武安侯"
+
+    def test_mark_file_processed_new(self, mock_data_dir):
+        sm = StateManager()
+        test_file = Path(str(mock_data_dir)) / "test_new.png"
+        test_file.write_text("new content")
+        assert sm.mark_file_processed(str(test_file)) is True
+
+    def test_mark_file_processed_duplicate(self, mock_data_dir):
+        sm = StateManager()
+        test_file = Path(str(mock_data_dir)) / "test_dup.png"
+        test_file.write_text("dup content")
+        assert sm.mark_file_processed(str(test_file)) is True
+        assert sm.mark_file_processed(str(test_file)) is False
+
+    def test_mark_file_processed_inode_key(self, mock_data_dir):
+        """验证 inode:size 作为去重键，同名但不同的文件视为不同"""
+        sm = StateManager()
+        test_file = Path(str(mock_data_dir)) / "test_inode.png"
+        test_file.write_text("version 1")
+        assert sm.mark_file_processed(str(test_file)) is True
+
+        # 写入不同内容（inode 不变但 size 变 → 不同 key）
+        test_file.write_text("version 2 with different size")
+        assert sm.mark_file_processed(str(test_file)) is True  # size 变了，视为新文件
+
+    def test_mark_file_processed_nonexistent_file(self, mock_data_dir):
+        """不存在的文件应返回 True（让调用方重试，而非永久跳过）"""
+        sm = StateManager()
+        nonexistent = str(mock_data_dir / "nonexistent.png")
+        assert sm.mark_file_processed(nonexistent) is True
+
+    def test_processed_files_trimming(self, mock_data_dir, monkeypatch):
+        """超过 MAX_PROCESSED_FILES 时应裁剪到 TRIM_KEEP_COUNT"""
+        import eagle_watcher.services.state_manager as sm_module
+        monkeypatch.setattr(sm_module, "MAX_PROCESSED_FILES", 5)
+        monkeypatch.setattr(sm_module, "TRIM_KEEP_COUNT", 3)
+
+        sm = StateManager()
+        test_dir = Path(str(mock_data_dir)) / "trim_test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+
+        for i in range(6):
+            f = test_dir / f"file_{i}.png"
+            f.write_text(f"content_{i}")
+            sm.mark_file_processed(str(f))
+
+        processed = sm.get_processed_files()
+        assert len(processed) == 3
+
+    def test_get_set_last_processed(self, mock_data_dir):
+        sm = StateManager()
+        assert sm.get_last_processed() is None
+
+        info = {"file": "test.png", "theme": "武安侯", "time": "2025-01-01T00:00:00"}
+        sm.set_last_processed(info)
+        result = sm.get_last_processed()
+        assert result is not None
+        assert result["file"] == "test.png"
+        assert result["theme"] == "武安侯"
+
+    def test_get_set_watcher_running(self, mock_data_dir):
+        sm = StateManager()
+        assert sm.get_watcher_running() is False
+
+        sm.set_watcher_running(True)
+        assert sm.get_watcher_running() is True
+
+        sm.set_watcher_running(False)
+        assert sm.get_watcher_running() is False
+
+    def test_get_set_eagle_online(self, mock_data_dir):
+        sm = StateManager()
+        assert sm.get_eagle_online() is False
+
+        sm.set_eagle_online(True)
+        assert sm.get_eagle_online() is True
+
+        sm.set_eagle_online(False)
+        assert sm.get_eagle_online() is False
+
+    def test_reset_daily_flags_noop(self, mock_data_dir):
+        """reset_daily_flags 当 inbox_notified_today 已经是 False 时不报错"""
+        sm = StateManager()
+        assert sm.get_inbox_notified_today() is False
+
+        sm.reset_daily_flags()
+        assert sm.get_inbox_notified_today() is False

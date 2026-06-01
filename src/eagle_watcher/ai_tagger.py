@@ -17,7 +17,7 @@ from typing import Optional
 
 from dashscope import MultiModalConversation
 
-MODEL = "qwen-vl-max"
+DEFAULT_MODEL = "qwen-vl-max"
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # 秒
 
@@ -36,7 +36,8 @@ def _get_api_key() -> Optional[str]:
         if key:
             _LOG.debug("AI API Key 从 config.yaml 读取")
             return key
-    except Exception:
+    except (ImportError, KeyError, OSError) as e:
+        _LOG.debug("config.yaml 读取失败，回退到环境变量: %s", e)
         pass
     key = os.environ.get("DASHSCOPE_API_KEY")
     if key:
@@ -49,12 +50,16 @@ def _get_image_hash(file_path: str) -> str:
     try:
         with open(file_path, "rb") as f:
             return hashlib.md5(f.read()).hexdigest()
-    except Exception:
+    except (OSError, PermissionError, FileNotFoundError) as e:
+        _LOG.warning("图片哈希计算失败 %s: %s", file_path, e)
         return ""
 
 
+CACHE_MAX_AGE_DAYS = 30
+
+
 def _load_cache(image_hash: str) -> Optional[dict]:
-    """从缓存加载分析结果"""
+    """从缓存加载分析结果（超过 30 天自动过期）"""
     if not image_hash:
         return None
 
@@ -62,10 +67,21 @@ def _load_cache(image_hash: str) -> Optional[dict]:
     if not cache_file.exists():
         return None
 
+    # 检查缓存是否过期
+    try:
+        mtime = cache_file.stat().st_mtime
+        age_days = (time.time() - mtime) / 86400
+        if age_days > CACHE_MAX_AGE_DAYS:
+            cache_file.unlink(missing_ok=True)
+            return None
+    except OSError:
+        pass
+
     try:
         with open(cache_file, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError) as e:
+        _LOG.warning("AI 缓存读取失败: %s", e)
         return None
 
 
@@ -99,15 +115,28 @@ def _encode_image(file_path: str) -> Optional[str]:
         }
         mime = mime_map.get(ext, "image/png")
         return f"data:{mime};base64,{base64.b64encode(data).decode('utf-8')}"
-    except Exception:
+    except (OSError, FileNotFoundError, PermissionError) as e:
+        _LOG.warning("图片编码失败 %s: %s", file_path, e)
         return None
+
+
+def _get_model() -> str:
+    try:
+        from eagle_watcher.config import load_config
+        cfg = load_config()
+        model = cfg.get("ai", {}).get("model", "")
+        return model or DEFAULT_MODEL
+    except (ImportError, KeyError, OSError) as e:
+        _LOG.debug("读取模型配置失败，使用默认值 %s: %s", DEFAULT_MODEL, e)
+        return DEFAULT_MODEL
 
 
 def _call_qwen_vl(img_data: str) -> Optional[str]:
-    """调用 Qwen-VL API，返回原始响应文本"""
     api_key = _get_api_key()
     if not api_key:
         return None
+
+    model = _get_model()
 
     prompt = (
         "分析这张图片，输出：\n"
@@ -119,7 +148,7 @@ def _call_qwen_vl(img_data: str) -> Optional[str]:
     )
 
     resp = MultiModalConversation.call(
-        model=MODEL,
+        model=model,
         messages=[
             {
                 "role": "user",
@@ -131,6 +160,7 @@ def _call_qwen_vl(img_data: str) -> Optional[str]:
         ],
         max_tokens=200,
         api_key=api_key,
+        timeout=60,
     )
 
     if resp.status_code != 200:
@@ -194,7 +224,7 @@ def _parse_response(text: str, file_path: str) -> Optional[dict]:
 
     for line in text.strip().split("\n"):
         line = line.strip()
-        if line.startswith("标签") or line.startswith("标签"):
+        if line.startswith("标签"):
             tag_str = line.split("：", 1)[-1].split(":", 1)[-1].strip()
             tags = [t.strip() for t in tag_str.replace("，", ",").split(",") if t.strip()]
         elif line.startswith("文件名"):

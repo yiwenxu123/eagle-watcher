@@ -21,10 +21,11 @@ MAX_CONFIDENCE = 0.98
 
 
 def _load() -> dict:
-    if not KNOWLEDGE_PATH.exists():
-        return {"keywords_mapping": {}, "sources": {}}
-    with open(KNOWLEDGE_PATH) as f:
-        return yaml.safe_load(f) or {"keywords_mapping": {}, "sources": {}}
+    with _knowledge_lock:
+        if not KNOWLEDGE_PATH.exists():
+            return {"keywords_mapping": {}, "sources": {}}
+        with open(KNOWLEDGE_PATH) as f:
+            return yaml.safe_load(f) or {"keywords_mapping": {}, "sources": {}}
 
 
 def _save(data: dict):
@@ -46,6 +47,8 @@ def _save(data: dict):
 
 
 def match_by_filename(filename: str) -> Optional[dict]:
+    # O(n) 线性扫描所有关键词。当前规模（<1000 条）性能可接受。
+    # 当知识库超过 5000 条时，应考虑构建倒排索引：token → [keyword]
     data = _load()
     mapping = data.get("keywords_mapping", {})
 
@@ -77,8 +80,9 @@ def match_by_filename(filename: str) -> Optional[dict]:
                     "keyword": keyword,
                     "match_type": "exact_word",
                 }
-        # 使用正则表达式进行完整词边界匹配
-        elif re.search(rf'\b{re.escape(keyword_lower)}\b', stem):
+        # 使用正则表达式进行完整词边界匹配（仅对 ASCII 关键词有效；CJK 字符在 Unicode 模式下皆为 \w，
+        # 导致 \b 在中文字符与 ASCI 标点间误匹配，故使用 re.ASCII 限制 \b 只对 ASCII 关键词生效）
+        elif re.search(rf'\b{re.escape(keyword_lower)}\b', stem, re.ASCII):
             if conf > best_conf:
                 best_conf = conf
                 best = {
@@ -137,7 +141,7 @@ def record_match(filename: str, keyword: str, theme: str, tags: list[str]):
                 "theme": theme,
                 "tags": tags,
                 "confidence": DEFAULT_CONFIDENCE_NEW,
-                "first_seen": __import__("datetime").datetime.now().isoformat()[:10],
+                "first_seen": datetime.now().strftime('%Y-%m-%d'),
                 "match_count": 1,
                 "source": "user_confirmed",
             }
@@ -146,17 +150,27 @@ def record_match(filename: str, keyword: str, theme: str, tags: list[str]):
 
 
 def record_miss(filename: str, theme: str = "__inbox__"):
+    """记录未匹配的文件（仅统计，不再自动学习关键词避免噪音污染）"""
     if theme == "__inbox__":
         return
 
     with _knowledge_lock:
         stem = Path(filename).stem
-        words = {w for w in re.split(r"[\s_\-.·]+", stem) if len(w) >= 2 and not w.isdigit()}
+        words = {w for w in re.split(r"[\s_\-.·]+", stem) if len(w) >= 3 and not w.isdigit()}
         if not words:
             return
 
-        keyword = max(words, key=len)
-        record_match(filename, keyword, theme, [keyword])
+        data = _load()
+        misses = data.setdefault("misses", [])
+        misses.append({
+            "filename": filename,
+            "theme": theme,
+            "time": datetime.now().isoformat(),
+        })
+        # 只保留最近 200 条
+        if len(misses) > 200:
+            data["misses"] = misses[-200:]
+        _save(data)
 
 
 # ────────── 来源匹配 ──────────
@@ -225,6 +239,21 @@ def cleanup_stale_entries(max_age_days: int = 90, min_confidence: float = 0.3) -
         _save(data)
 
     return stats
+
+
+def maybe_cleanup(threshold: int = 500) -> dict:
+    """如果知识库条目数超过阈值，自动执行清理。
+
+    Args:
+        threshold: 触发清理的条目数阈值（默认 500）
+
+    Returns:
+        清理统计，如未触发清理则返回空统计
+    """
+    data = _load()
+    if len(data.get("keywords_mapping", {})) > threshold:
+        return cleanup_stale_entries()
+    return {"keywords_removed": 0, "sources_removed": 0}
 
 
 def get_knowledge_stats() -> dict:

@@ -4,29 +4,73 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>素材管家</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        apple: { bg: '#f5f5f7', card: '#ffffff', text: '#1d1d1f', muted: '#86868b', blue: '#0071e3', border: '#d2d2d7', red: '#ff3b30', green: '#34c759' }
-      },
-      fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Helvetica Neue', 'sans-serif'] },
-      borderRadius: { apple: '10px' }
-    }
-  }
-}
-</script>
 <style>
-  body { -webkit-font-smoothing: antialiased; }
-  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: #c7c7cc; border-radius: 2px; }
-  .fade-in { animation: fadeIn 0.2s ease-out; }
+  /* ── 基础 ── */
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; -webkit-font-smoothing: antialiased; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 14px; line-height: 1.625; color: #1d1d1f; background: #f5f5f7; -webkit-user-select: none; user-select: none; }
+  /* ── 颜色 ── */
+  .bg-apple-bg { background: #f5f5f7; } .bg-apple-card { background: #fff; } .bg-apple-blue { background: #0071e3; } .bg-apple-red { background: #ff3b30; }
+  .text-apple-text { color: #1d1d1f; } .text-apple-muted { color: #86868b; } .text-apple-blue { color: #0071e3; } .text-apple-red { color: #ff3b30; } .text-apple-green { color: #34c759; }
+  .text-white { color: #fff; }
+  .border-apple-border { border-color: #d2d2d7; }
+  .bg-gray-50 { background: #f9fafb; } .bg-gray-100 { background: #f3f4f6; } .bg-gray-800 { background: #1f2937; }
+  .text-gray-500 { color: #6b7280; } .text-gray-700 { color: #374151; }
+  .bg-green-100 { background: #dcfce7; } .text-green-700 { color: #15803d; }
+  .bg-red-100 { background: #fee2e2; } .text-red-600 { color: #dc2626; }
+  .text-apple-text\/80 { color: rgba(29,29,31,.8); }
+  .text-apple-blue\/70 { color: rgba(0,113,227,.7); }
+  /* ── 布局 ── */
+  .flex { display: flex; } .inline-flex { display: inline-flex; } .grid { display: grid; } .hidden { display: none; }
+  .flex-1 { flex: 1 1 0%; } .flex-shrink-0 { flex-shrink: 0; } .flex-wrap { flex-wrap: wrap; }
+  .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .items-start { align-items: flex-start; } .items-center { align-items: center; }
+  .justify-between { justify-content: space-between; } .justify-center { justify-content: center; } .justify-end { justify-content: flex-end; }
+  .gap-1 { gap: 4px; } .gap-1\.5 { gap: 6px; } .gap-2 { gap: 8px; } .gap-2\.5 { gap: 10px; }
+  .space-y-1 > * + * { margin-top: 4px; } .space-y-2 > * + * { margin-top: 8px; } .space-y-2\.5 > * + * { margin-top: 10px; } .space-y-3 > * + * { margin-top: 12px; }
+  /* ── 间距 ── */
+  .p-2 { padding: 8px; } .p-2\.5 { padding: 10px; } .p-3 { padding: 12px; } .p-4 { padding: 16px; } .px-1 { padding-left: 4px; padding-right: 4px; } .px-1\.5 { padding-left: 6px; padding-right: 6px; } .px-2 { padding-left: 8px; padding-right: 8px; } .px-2\.5 { padding-left: 10px; padding-right: 10px; } .px-3 { padding-left: 12px; padding-right: 12px; } .py-0\.5 { padding-top: 2px; padding-bottom: 2px; } .py-1 { padding-top: 4px; padding-bottom: 4px; } .py-1\.5 { padding-top: 6px; padding-bottom: 6px; } .py-2 { padding-top: 8px; padding-bottom: 8px; } .py-4 { padding-top: 16px; padding-bottom: 16px; } .py-6 { padding-top: 24px; padding-bottom: 24px; } .pt-3 { padding-top: 12px; } .pt-7 { padding-top: 28px; } .pb-3 { padding-bottom: 12px; } .mt-0\.5 { margin-top: 2px; } .mb-1 { margin-bottom: 4px; } .ml-1 { margin-left: 4px; } .ml-2 { margin-left: 8px; } .mr-1 { margin-right: 4px; }
+  /* ── 尺寸 ── */
+  .w-full { width: 100%; } .w-10 { width: 40px; } .w-32 { width: 128px; } .h-10 { height: 40px; } .min-h-0 { min-height: 0; }
+  .max-w-\[160px\] { max-width: 160px; } .max-h-40 { max-height: 160px; } .max-h-56 { max-height: 224px; } .max-h-\[620px\] { max-height: 620px; } .min-w-0 { min-width: 0; }
+  /* ── 排版 ── */
+  .text-\[9px\] { font-size: 9px; } .text-\[10px\] { font-size: 10px; } .text-\[11px\] { font-size: 11px; } .text-xs { font-size: 12px; } .text-sm { font-size: 14px; } .text-base { font-size: 16px; } .text-lg { font-size: 18px; }
+  .font-normal { font-weight: 400; } .font-medium { font-weight: 500; } .font-semibold { font-weight: 600; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .whitespace-nowrap { white-space: nowrap; }
+  .text-center { text-align: center; } .uppercase { text-transform: uppercase; } .tracking-wide { letter-spacing: .05em; } .tracking-tight { letter-spacing: -.025em; } .leading-relaxed { line-height: 1.625; }
+  /* ── 边框 & 圆角 ── */
+  .border { border-width: 1px; border-style: solid; } .border-t { border-top-width: 1px; border-top-style: solid; } .border-b { border-bottom-width: 1px; border-bottom-style: solid; } .border-0 { border: 0; }
+  .rounded-lg { border-radius: 8px; } .rounded-apple { border-radius: 10px; } .rounded-full { border-radius: 9999px; }
+  .last\:border-0:last-child { border: 0; }
+  /* ── 效果 ── */
+  .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,.05); }
+  .overflow-hidden { overflow: hidden; } .overflow-y-auto { overflow-y: auto; }
+  .transition-opacity { transition: opacity .15s; } .transition-colors { transition: color .15s, background-color .15s; }
+  .opacity-0 { opacity: 0; } .opacity-40 { opacity: .4; } .opacity-100 { opacity: 1; }
+  .pointer-events-none { pointer-events: none; } .z-50 { z-index: 50; }
+  .fixed { position: fixed; } .bottom-3 { bottom: 12px; } .left-1\/2 { left: 50%; } .-translate-x-1\/2 { transform: translateX(-50%); }
+  .cursor-pointer { cursor: pointer; } .select-none { -webkit-user-select: none; user-select: none; }
+  /* ── 状态 ── */
+  button { border: 0; cursor: pointer; font: inherit; line-height: 1; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.emoji-btn { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; font-size: 14px; transition: background .15s, border-color .15s; }
+  button.emoji-btn:hover { background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.08); }
+  .hover\:bg-gray-50:hover { background: #f9fafb; } .hover\:bg-gray-200:hover { background: #e5e7eb; } .hover\:opacity-90:hover { opacity: .9; } .hover\:opacity-100:hover { opacity: 1; } .hover\:underline:hover { text-decoration: underline; }
+  .focus\:outline-none:focus { outline: 0; } .focus\:ring-1:focus { box-shadow: 0 0 0 1px #0071e3; } .focus\:ring-2:focus { box-shadow: 0 0 0 2px rgba(0,113,227,.3); } .focus\:ring-apple-blue\/30:focus { box-shadow: 0 0 0 2px rgba(0,113,227,.3); }
+  /* ── 自定义组件 ── */
+  .btn-primary { background: #0071e3; color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 500; border: 0; cursor: pointer; transition: opacity .15s; }
+  .btn-primary:hover { opacity: .9; }
+  .btn-secondary { background: #f3f4f6; color: #1d1d1f; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 500; border: 0; cursor: pointer; transition: background .15s; }
+  .btn-secondary:hover { background: #e5e7eb; }
+  .btn-danger { background: #ff3b30; color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 500; border: 0; cursor: pointer; transition: opacity .15s; }
+  .btn-danger:hover { opacity: .9; }
+  select, input[type="text"] { font-size: 14px; padding: 8px 14px; border-radius: 10px; }
+  select { min-height: 38px; padding: 6px 34px 6px 12px; text-indent: 12px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6' fill='%2386868b'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; -webkit-appearance: none; appearance: none; }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; } .scrollbar-thin::-webkit-scrollbar-thumb { background: #c7c7cc; border-radius: 2px; }
+  .fade-in { animation: fadeIn .2s ease-out; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-  .btn-primary { @apply bg-apple-blue text-white rounded-lg px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity; }
-  .btn-secondary { @apply bg-gray-100 text-apple-text rounded-lg px-3 py-1.5 text-xs font-medium hover:bg-gray-200 transition-colors; }
-  .btn-danger { @apply bg-apple-red text-white rounded-lg px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity; }
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2.5px solid #e5e5ea; border-top-color: #0071e3; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 </style>
 </head>
 <body class="bg-apple-bg text-apple-text font-sans text-sm leading-relaxed select-none">
@@ -36,55 +80,102 @@ tailwind.config = {
     <div class="flex items-center justify-between mb-1">
       <h1 class="text-base font-semibold tracking-tight">🖼 素材管家</h1>
       <div class="flex items-center gap-1.5">
-        <button id="close-panel-btn" onclick="window.close()" class="text-sm opacity-40 hover:opacity-100 transition-opacity px-1" title="关闭 (Cmd+W)">✕</button>
-        <span id="eagle-badge" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Eagle ✓</span>
-      </div>
-      <!-- AI 状态行 -->
-      <div class="flex items-center justify-center gap-2 mt-1">
-        <span id="ai-badge" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">AI: 未配置</span>
+        <span id="ai-badge" class="hidden text-xs px-2 py-0.5 rounded-full">AI: --</span>
+        <button onclick="clearAiCache()" class="emoji-btn text-apple-muted hover:text-apple-red transition-colors" title="清除 AI 视觉缓存">🗑</button>
+        <span id="eagle-badge" class="hidden text-xs px-2 py-0.5 rounded-full">Eagle --</span>
+        <button id="pin-btn" onclick="togglePin()" class="emoji-btn text-apple-muted hover:text-apple-blue transition-colors" title="置顶面板">📌</button>
       </div>
     </div>
 
-    <!-- 状态卡片 -->
+    <!-- 配置引导横幅 -->
+    <div id="setup-banner" class="hidden bg-apple-card rounded-apple p-3 shadow-sm border border-red-300 fade-in">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-apple-red font-semibold text-sm">⚠️ 首次使用配置</span>
+      </div>
+      <p class="text-[11px] text-apple-text/80 leading-relaxed mb-2">
+        素材管家需要连接 Eagle 才能自动导入素材。请按以下步骤配置：
+      </p>
+      <ol class="text-[11px] text-apple-text/70 space-y-0.5 ml-4 list-decimal mb-2">
+        <li>打开 <strong>Eagle</strong> 应用</li>
+        <li>进入 Eagle → <strong>偏好设置</strong> → <strong>插件</strong></li>
+        <li>勾选「<strong>允许其他应用连接</strong>」</li>
+        <li>复制显示的 API Token</li>
+        <li>粘贴到 <code>~/.eagle-watcher/config.yaml</code> 的 <code>eagle.token</code> 字段</li>
+        <li>保存后点击下方「重新检测」</li>
+      </ol>
+      <div class="flex gap-2">
+        <button onclick="openEagle()" class="btn-primary text-xs flex-1">📂 打开 Eagle</button>
+        <button onclick="refresh()" class="btn-secondary text-xs flex-1">🔄 重新检测</button>
+      </div>
+    </div>
+
+    <!-- 权限警告横幅 -->
+    <div id="permission-banner" class="hidden bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+      <div class="flex items-start gap-2">
+        <span class="text-red-500 text-sm">⚠️</span>
+        <div class="text-xs text-red-700">
+          <div class="font-medium mb-1">文件夹权限不足</div>
+          <div class="mb-2">监控目录 <span class="perm-path font-mono"></span> 无访问权限，素材将不会被自动检测。</div>
+          <button onclick="openSystemSettings()" class="text-red-600 underline hover:text-red-800">打开系统设置 → 隐私与安全性 → 完全磁盘访问权限</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状态卡片 — 三栏统一 line-height，label 自然对齐 -->
     <div class="grid grid-cols-3 gap-2 text-center">
-      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
-        <div class="text-lg font-semibold" id="stat-today">--</div>
-        <div class="text-[10px] text-apple-muted uppercase tracking-wide">今日入库</div>
+      <div class="bg-apple-card rounded-apple p-3 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold truncate" id="stat-today">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide leading-relaxed">今日入库</div>
       </div>
-      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
-        <div class="text-lg font-semibold" id="stat-inbox">--</div>
-        <div class="text-[10px] text-apple-muted uppercase tracking-wide">待分类</div>
+      <div class="bg-apple-card rounded-apple p-3 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold truncate" id="stat-inbox">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide leading-relaxed">待分类</div>
       </div>
-      <div class="bg-apple-card rounded-apple p-2.5 shadow-sm border border-apple-border">
-        <div class="text-lg font-semibold" id="stat-last">--</div>
-        <div class="text-[10px] text-apple-muted uppercase tracking-wide">上次处理</div>
+      <div class="bg-apple-card rounded-apple p-3 shadow-sm border border-apple-border">
+        <div class="text-lg font-semibold truncate" id="stat-last">--</div>
+        <div class="text-[10px] text-apple-muted uppercase tracking-wide leading-relaxed">上次处理</div>
       </div>
     </div>
 
-    <!-- 当前主题 -->
-    <div class="bg-apple-card rounded-apple p-3 shadow-sm border border-apple-border space-y-2">
-      <div class="flex items-center justify-between">
-        <span class="font-medium text-xs text-apple-muted uppercase tracking-wide">当前主题</span>
-        <button onclick="clearProject()" class="text-[11px] text-apple-blue hover:underline">取消</button>
+    <!-- 教AI认识新素材 — 当前主题 + 待分类整合区 -->
+    <div class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
+      <!-- 顶部：主题设置 -->
+      <div class="p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <h2 class="font-medium text-sm">🧠 教AI认识新素材</h2>
+          <span class="text-[10px] text-apple-muted" id="kb-info"></span>
+        </div>
+        <p class="text-[11px] text-apple-muted leading-relaxed">
+          为素材指定主题，AI 将学会下次自动识别。确认后「轮滑→海报参考」这样的映射会记入知识库。
+        </p>
+        <div>
+          <label class="text-[11px] text-apple-muted">当前主题（默认归属）</label>
+          <div class="flex gap-1.5">
+            <select id="project-select" onchange="switchProject(this.value)"
+                    class="flex-1 bg-white border border-apple-border focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+              <option>加载中...</option>
+            </select>
+            <button onclick="clearProject()" class="text-[11px] text-apple-blue/70 hover:text-apple-blue whitespace-nowrap px-2 transition-colors">取消</button>
+          </div>
+        </div>
       </div>
-      <select id="project-select" onchange="switchProject(this.value)"
-              class="w-full text-sm bg-gray-50 border border-apple-border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
-        <option>加载中...</option>
-      </select>
-    </div>
 
-    <!-- 操作按钮组 -->
-    <div class="grid grid-cols-2 gap-2">
-      <button onclick="openEagle()"
-              class="bg-apple-card border border-apple-border rounded-apple p-2.5 text-center
-                     hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
-        📂 打开 Eagle
-      </button>
-      <button onclick="refresh()"
-              class="bg-apple-card border border-apple-border rounded-apple p-2.5 text-center
-                     hover:bg-gray-50 transition-colors shadow-sm text-sm font-medium">
-        🔄 刷新状态
-      </button>
+      <!-- 待分类素材区 -->
+      <div class="border-t border-apple-border">
+        <div class="p-3 space-y-2 max-h-56 overflow-y-auto scrollbar-thin" id="inbox-content">
+          <div class="flex items-center justify-center py-6 text-xs text-apple-muted">
+            <span>点击下方「加载待学习素材」开始</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div class="border-t border-apple-border p-2.5">
+        <div class="flex gap-2">
+          <button onclick="openEagle()" class="flex-1 text-center bg-white border border-apple-border rounded-lg py-2 hover:bg-gray-50 transition-colors text-xs font-medium">📂 打开 Eagle</button>
+          <button onclick="refresh(); setTimeout(() => loadInbox(false), 200)" class="flex-1 text-center bg-apple-blue text-white rounded-lg py-2 hover:opacity-90 transition-opacity text-xs font-medium">🔄 加载待学习素材</button>
+        </div>
+      </div>
     </div>
 
     <!-- 管理区 -->
@@ -93,22 +184,21 @@ tailwind.config = {
                      flex items-center justify-between">
         <span>⚙️ 文件夹 & 主题管理</span>
       </summary>
-      <div class="p-3 pt-2 border-t border-apple-border space-y-2">
-        <div class="flex gap-1.5 mb-2">
-          <button onclick="showCreate('category')" class="btn-primary">+ 新建文件夹</button>
-          <button onclick="showCreate('project')" class="btn-primary">+ 新建主题</button>
+      <div class="p-3 border-t border-apple-border space-y-3">
+        <div class="flex gap-2">
+          <button onclick="showCreate('category')" class="btn-primary flex-1">+ 新建文件夹</button>
+          <button onclick="showCreate('project')" class="btn-primary flex-1">+ 新建主题</button>
         </div>
         <div id="manage-content" class="space-y-1 max-h-40 overflow-y-auto scrollbar-thin text-xs">
           <p class="text-apple-muted">点击「刷新」加载...</p>
         </div>
-        <!-- 内联表单 -->
-        <div id="inline-form" class="hidden border-t border-apple-border pt-2 space-y-1.5">
-          <input id="form-name" type="text" placeholder="名称" class="w-full text-xs border border-apple-border rounded-lg p-1.5 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
-          <div id="form-extra" class="hidden">
-            <select id="form-category" class="w-full text-xs border border-apple-border rounded-lg p-1.5"></select>
-            <input id="form-tags" type="text" placeholder="标签（逗号分隔）" class="w-full text-xs border border-apple-border rounded-lg p-1.5 focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+        <div id="inline-form" class="hidden border-t border-apple-border pt-3 space-y-2.5">
+          <input id="form-name" type="text" placeholder="名称" class="w-full border border-apple-border focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
+          <div id="form-extra" class="hidden space-y-2.5">
+            <select id="form-category" class="w-full border border-apple-border"></select>
+            <input id="form-tags" type="text" placeholder="标签（逗号分隔）" class="w-full border border-apple-border focus:outline-none focus:ring-2 focus:ring-apple-blue/30">
           </div>
-          <div class="flex gap-1.5 justify-end">
+          <div class="flex gap-2 justify-end">
             <button onclick="hideForm()" class="btn-secondary">取消</button>
             <button id="form-submit" onclick="submitForm()" class="btn-primary">创建</button>
           </div>
@@ -116,33 +206,56 @@ tailwind.config = {
       </div>
     </details>
 
-    <!-- 整理待分类 -->
-    <details id="inbox-section" class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
+    <!-- 操作历史 -->
+    <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
+             ontoggle="if(this.open) loadHistory()">
       <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors
                      flex items-center justify-between">
-        <span>📦 整理待分类 (<span id="inbox-total">0</span>)</span>
+        <span>📋 操作历史</span>
+        <span class="text-[10px] text-apple-muted hover:text-apple-red cursor-pointer select-none"
+              onclick="event.stopPropagation(); clearHistory()">清空</span>
       </summary>
-      <div class="p-3 pt-2 border-t border-apple-border space-y-2 max-h-52 overflow-y-auto scrollbar-thin" id="inbox-content">
-        <p class="text-xs text-apple-muted">展开以加载...</p>
+      <div class="p-3 border-t border-apple-border max-h-48 overflow-y-auto scrollbar-thin" id="history-content">
+        <p class="text-apple-muted text-xs">展开后加载...</p>
       </div>
     </details>
 
   <!-- Toast -->
-  <div id="toast" class="fixed bottom-3 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 whitespace-nowrap"></div>
+  <div id="toast" class="sticky bottom-0 bg-gray-800 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 whitespace-nowrap w-full text-center"></div>
 
   </div>
 
 <script>
-const API = 'http://127.0.0.1:9800';
+const API = window.location.origin;
+const SESSION_TOKEN = document.querySelector('meta[name="session-token"]')?.getAttribute('content') || '';
 
 function $(id) { return document.getElementById(id); }
 
-function api(method, path, body) {
-  return fetch(API + path, {
-    method,
-    headers: body ? {'Content-Type': 'application/json'} : {},
-    body: body ? JSON.stringify(body) : undefined,
-  }).then(r => r.json());
+async function api(method, path, body) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const headers = body ? {'Content-Type': 'application/json'} : {};
+    if (method === 'POST' && SESSION_TOKEN) {
+      headers['X-Session-Token'] = SESSION_TOKEN;
+    }
+    // 幂等性由服务端基于 (操作名+时间戳) 处理，前端无需生成随机 key
+    const r = await fetch(API + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const data = await r.json();
+    if (!r.ok) {
+      throw new Error(data.error || data.message || `HTTP ${r.status}`);
+    }
+    return data;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 }
 
 function toast(msg) {
@@ -159,7 +272,9 @@ async function refresh() {
     const data = await api('GET', '/api/status');
     $('stat-today').textContent = data.today_count ?? '--';
     $('stat-inbox').textContent = data.inbox_count ?? '--';
-    $('stat-last').textContent = data.last_processed ?? '--';
+    const lastFn = data.last_processed?.filename ?? '--';
+    $('stat-last').textContent = lastFn.length > 22 ? lastFn.slice(0, 19) + '…' : lastFn;
+    $('stat-last').title = data.last_processed?.filename || '';
 
     const online = data.eagle_online;
     const badge = $('eagle-badge');
@@ -167,28 +282,64 @@ async function refresh() {
     badge.className = 'text-xs px-2 py-0.5 rounded-full ' + (online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600');
 
     const aiBadge = $('ai-badge');
+    aiBadge.classList.remove('hidden');
     if (data.ai_configured) {
-      aiBadge.textContent = 'AI: 可用';
+      const model = data.ai_model || 'qwen-vl-max';
+      aiBadge.textContent = `AI: ${model}`;
       aiBadge.className = 'text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full';
     } else {
       aiBadge.textContent = 'AI: 未配置';
       aiBadge.className = 'text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full';
     }
 
+    // 配置引导横幅
+    const setupBanner = $('setup-banner');
+    if (setupBanner) {
+      if (!online || !data.ai_configured) {
+        setupBanner.classList.remove('hidden');
+      } else {
+        setupBanner.classList.add('hidden');
+      }
+    }
+
+    // 权限警告
+    const permBanner = $('permission-banner');
+    if (permBanner) {
+      if (data.permission_denied) {
+        permBanner.classList.remove('hidden');
+        const pathEl = permBanner.querySelector('.perm-path');
+        if (pathEl) pathEl.textContent = data.permission_path || '';
+      } else {
+        permBanner.classList.add('hidden');
+      }
+    }
+
+    // 缓存主题列表供 loadInbox 使用
+    _availableThemes = Object.keys(data.projects || {}).sort();
+    _currentTheme = data.current_project || '';
+
     const sel = $('project-select');
     const cur = data.current_project;
-    const projects = data.projects || {};
-    const names = Object.keys(projects).sort();
+    const names = _availableThemes;
     sel.innerHTML = '<option value="">自动匹配</option>' +
-      names.map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>${n}</option>`).join('');
+      names.map(n => {
+        const htmlN = escapeHtml(n);
+        return `<option value="${htmlN}" ${n === cur ? 'selected' : ''}>${htmlN}</option>`;
+      }).join('');
+
+    // U5: 没有当前主题时隐藏取消按钮
+    const cancelBtn = $('project-select').nextElementSibling;
+    if (cancelBtn) cancelBtn.style.display = cur ? '' : 'none';
+
+    // 知识库统计
+    const kb = $('kb-info');
+    if (data.projects) {
+      const count = Object.keys(data.projects).length;
+      kb.textContent = `${count} 个主题`;
+    }
 
     renderManage(data);
     populateFormCategory(data);
-
-    // 如果 inbox section 已展开且已加载，刷新数据
-    if ($('inbox-section').hasAttribute('open') && $('inbox-content').dataset.loaded) {
-      loadInbox();
-    }
   } catch (e) {
     toast('⚠️ 刷新失败：无法连接服务器');
     console.error('refresh error:', e);
@@ -213,25 +364,31 @@ function renderManage(data) {
     const info = cats[cat] || {};
     const folder = info.eagle_folder || cat;
     const fromEagle = info.from_eagle;
+    const jsCat = escapeJsString(cat);
+    const htmlCat = escapeHtml(cat);
+    const htmlFolder = escapeHtml(folder);
     const icon = fromEagle ? (info.folder_id ? '📁' : '📂') : '🗂️';
     const badge = fromEagle ? '<span class="text-[9px] bg-green-100 text-green-700 px-1 rounded ml-1">Eagle</span>' : '<span class="text-[9px] bg-gray-100 text-gray-500 px-1 rounded ml-1">本地</span>';
     const projs = projNames.filter(n => (projects[n]?.category || '') === cat);
     return `<div class="flex items-center justify-between py-1 border-b border-apple-border last:border-0">
       <div class="min-w-0">
-        <span class="font-medium">${icon} ${cat}${badge}</span>
-        <span class="text-apple-muted ml-1 text-[10px]">→ ${folder}</span>
-        <div class="text-apple-muted text-[10px] truncate">${projs.map(p => `🏷️ ${p}`).join(', ')}</div>
+        <span class="font-medium">${icon} ${htmlCat}${badge}</span>
+        <span class="text-apple-muted ml-1 text-[10px]">→ ${htmlFolder}</span>
+        <div class="text-apple-muted text-[10px] truncate">${projs.map(p => `🏷️ ${escapeHtml(p)}`).join(', ')}</div>
       </div>
-      ${!fromEagle ? `<button onclick="deleteCategory('${cat}')" class="text-apple-red hover:underline text-[11px] flex-shrink-0">删除</button>` : ''}
+      ${!fromEagle ? `<button onclick="deleteCategory('${jsCat}')" class="text-apple-red hover:underline text-[11px] flex-shrink-0">删除</button>` : ''}
     </div>`;
   }).join('');
 
   const orphanProjs = projNames.filter(n => !projects[n]?.category || !cats[projects[n].category]);
   const orphanHtml = orphanProjs.length > 0
-    ? `<div class="pt-1"><span class="text-apple-muted text-[11px]">未关联分类：</span>${orphanProjs.map(p =>
-        `<span class="inline-flex items-center gap-1 ml-1">🏷️ ${p}
-          <button onclick="deleteProject('${p}')" class="text-apple-red hover:underline text-[11px]">✕</button>
-        </span>`).join('')}</div>`
+    ? `<div class="pt-1"><span class="text-apple-muted text-[11px]">未关联分类：</span>${orphanProjs.map(p => {
+        const jsP = escapeJsString(p);
+        const htmlP = escapeHtml(p);
+        return `<span class="inline-flex items-center gap-1 ml-1">🏷️ ${htmlP}
+          <button onclick="deleteProject('${jsP}')" class="text-apple-red hover:underline text-[11px]">✕</button>
+        </span>`;
+      }).join('')}</div>`
     : '';
 
   mc.innerHTML = catHtml + orphanHtml;
@@ -268,7 +425,10 @@ function populateFormCategory(data) {
   const cats = (data || {}).categories || {};
   const sel = $('form-category');
   const names = Object.keys(cats);
-  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
+  sel.innerHTML = names.map(n => {
+    const htmlN = escapeHtml(n);
+    return `<option value="${htmlN}">${htmlN}</option>`;
+  }).join('');
 }
 
 async function submitForm() {
@@ -299,14 +459,32 @@ async function submitForm() {
 }
 
 async function deleteCategory(name) {
-  if (!confirm(`确定删除文件夹「${name}」及其所有主题？`)) return;
+  // 先请求后端获取关联项目信息
+  let result;
   try {
-    const result = await api('POST', '/api/categories/delete', { name });
-    if (!result.ok && result.error) toast('⚠️ ' + result.error);
-    refresh();
+    result = await api('POST', '/api/categories/delete', { name });
   } catch (e) {
     toast('⚠️ 删除失败：网络错误');
-    console.error('deleteCategory error:', e);
+    return;
+  }
+  // 如果需要级联确认，展示详细信息
+  if (result.error === 'cascade_confirm_required') {
+    const affected = result.affected_projects || [];
+    const msg = affected.length > 0
+      ? `确定删除文件夹「${name}」？\n\n将同时删除 ${affected.length} 个关联主题：${affected.join('、')}`
+      : `确定删除文件夹「${name}」？`;
+    if (!confirm(msg)) return;
+    try {
+      const r = await api('POST', '/api/categories/delete', { name, confirm: true });
+      if (!r.ok && r.error) toast('⚠️ ' + r.error);
+      refresh();
+    } catch (e) {
+      toast('⚠️ 删除失败：网络错误');
+    }
+  } else if (result.ok) {
+    refresh();
+  } else if (result.error) {
+    toast('⚠️ ' + result.error);
   }
 }
 
@@ -340,98 +518,334 @@ async function openEagle() {
   await api('POST', '/api/action', { action: 'open-eagle' });
 }
 
-// ────────── 整理待分类 ──────────
+// ────────── 打开系统隐私设置 ──────────
 
-async function loadInbox() {
+async function openSystemSettings() {
+  await api('POST', '/api/action', { action: 'open-privacy-settings' });
+}
+
+// ────────── 教AI认识新素材 ──────────
+
+// 缓存主题列表，由 refresh() 更新
+let _availableThemes = [];
+let _currentTheme = '';
+
+/** 转义 HTML 特殊字符防止 XSS */
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** 转义 JS 字符串字面量（用于 onclick 等属性中的字符串参数）*/
+function escapeJsString(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+let _inboxOffset = 0;
+const _inboxLimit = 50;
+
+async function loadInbox(append) {
   const container = $('inbox-content');
+  if (!append) { _inboxOffset = 0; }
   try {
-    const data = await api('GET', '/api/inbox');
+    if (!append) {
+      container.innerHTML = '<div class="flex items-center justify-center py-6"><div class="spinner"></div><span class="ml-2 text-xs text-apple-muted">加载中…</span></div>';
+    }
+    const data = await api('GET', `/api/inbox?limit=${_inboxLimit}&offset=${_inboxOffset}`);
     const items = data.items || [];
-    $('inbox-total').textContent = data.total ?? items.length;
 
-    if (items.length === 0) {
-      container.innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
-      container.dataset.loaded = '1';
+    if (items.length === 0 && !append) {
+      container.innerHTML = '<div class="flex items-center justify-center py-6 text-xs text-apple-muted">🎉 没有待学习素材，知识库已就绪</div>';
       return;
     }
 
-    container.innerHTML = items.map(item => `
-      <div class="flex items-center gap-2 p-2 rounded-lg border border-apple-border bg-gray-50/50" id="inbox-${item.id}">
-        <img src="${item.thumbnail || ''}" class="w-8 h-8 rounded object-cover bg-gray-100 flex-shrink-0" alt=""
+    const projectNames = _availableThemes;
+
+    const html = items.map((item, idx) => {
+      const jsId = escapeJsString(item.id);
+      const jsName = escapeJsString(item.name);
+      const htmlName = escapeHtml(item.name);
+      const htmlThumb = escapeHtml(item.thumbnail || '');
+      const sugg = item.suggested_theme || '';
+      const suggTags = item.suggested_tags || [];
+
+      // 构建主题下拉，建议主题默认选中
+      const themeOpts = projectNames.map(t => {
+        const selected = t === sugg || (!sugg && t === _currentTheme);
+        const htmlT = escapeHtml(t);
+        return `<option value="${htmlT}" ${selected ? 'selected' : ''}>${htmlT}${t === sugg ? '（建议）' : ''}</option>`;
+      }).join('');
+      const themeHtml = `<option value="">（不指定）</option>${themeOpts}`;
+
+      // 建议标签以小字显示，点击可填入
+      const suggTagsHtml = suggTags.length > 0
+        ? `<div class="flex gap-1 flex-wrap items-center">
+            <span class="text-[10px] text-apple-muted">建议：</span>
+            ${suggTags.map(t => `<button onclick="appendTag('${jsId}','${escapeJsString(t)}')" class="text-[10px] text-apple-blue/70 hover:text-apple-blue bg-blue-50 px-1.5 py-0.5 rounded transition-colors">${escapeHtml(t)}</button>`).join('')}
+            <button onclick="applyAllTags('${jsId}')" class="text-[10px] text-apple-muted hover:text-apple-blue transition-colors">全部应用</button>
+          </div>`
+        : '';
+
+      return `<div class="flex items-start gap-2.5 p-2.5 rounded-lg border border-apple-border bg-gray-50/50 fade-in" id="inbox-${jsId}" style="animation-delay:${idx * 0.05}s">
+        <img src="${htmlThumb}" class="w-10 h-10 rounded-lg object-cover bg-gray-100 flex-shrink-0 mt-0.5" alt=""
              onerror="this.style.display='none'">
-        <div class="flex-1 min-w-0">
-          <div class="text-xs truncate font-medium">${item.name}</div>
-          <div class="text-[10px] text-apple-muted">
-            ${item.suggested_theme ? `→ ${item.suggested_theme}` : '未识别'}
-            ${item.suggested_tags.length ? ` (${item.suggested_tags.join(', ')})` : ''}
+        <div class="flex-1 min-w-0 space-y-1">
+          <div class="text-[11px] truncate font-normal text-apple-text/80">${htmlName}</div>
+          <div class="flex gap-1.5 items-center flex-wrap">
+            <label class="text-[10px] text-apple-muted whitespace-nowrap">主题/项目</label>
+            <select id="theme-${jsId}" class="bg-white border border-apple-border focus:outline-none focus:ring-1 focus:ring-apple-blue/30 max-w-[160px]">
+              ${themeHtml}
+            </select>
+            <input id="tags-${jsId}" type="text" placeholder="标签（可选）"
+                   class="bg-white border border-apple-border w-32 focus:outline-none focus:ring-1 focus:ring-apple-blue/30">
           </div>
+          ${suggTagsHtml}
+          <div class="text-[10px] text-apple-muted/60 mt-0.5">通过标签关联主题</div>
         </div>
-        <div class="flex gap-1 flex-shrink-0">
-          <button onclick="confirmSort('${item.id}', '${item.suggested_theme || ''}', '${item.suggested_tags.join(',')}', '${(item.tags||[]).join(',')}', '${item.name}')"
-                  class="btn-primary text-[10px] px-2 py-1">✔</button>
-          <button onclick="skipSort('${item.id}', '${(item.tags||[]).join(',')}')"
-                  class="btn-secondary text-[10px] px-2 py-1">✗</button>
+        <div class="flex gap-1 flex-shrink-0 mt-0.5">
+          <button id="confirm-${jsId}" onclick="confirmSort('${jsId}', '${jsName}')"
+                  class="bg-apple-blue text-white rounded-lg px-2.5 py-1.5 text-[11px] font-medium hover:opacity-90 transition-opacity whitespace-nowrap"
+                  title="从知识库学习此文件→主题映射">✓ 教AI认识它</button>
+          <button id="skip-${jsId}" onclick="skipSort('${jsId}')"
+                  class="bg-gray-100 text-apple-text rounded-lg px-2.5 py-1.5 text-[11px] font-medium hover:bg-gray-200 transition-colors"
+                  title="跳过，不再显示">✗ 跳过</button>
         </div>
-      </div>
-    `).join('');
-    container.dataset.loaded = '1';
+      </div>`;
+    }).join('');
+
+    if (append) {
+      // 移除旧的"加载更多"按钮
+      const oldMore = container.querySelector('.load-more-btn');
+      if (oldMore) oldMore.remove();
+      container.insertAdjacentHTML('beforeend', html);
+    } else {
+      container.innerHTML = html;
+    }
+
+    // 添加"加载更多"按钮
+    if (data.has_more) {
+      _inboxOffset += _inboxLimit;
+      container.insertAdjacentHTML('beforeend',
+        `<div class="load-more-btn flex justify-center py-2">
+          <button onclick="loadInbox(true)" class="text-xs text-apple-blue hover:underline">加载更多（还有 ${data.total - _inboxOffset} 项）</button>
+        </div>`);
+    }
   } catch (e) {
-    container.innerHTML = '<p class="text-xs text-apple-red">加载失败，请重试</p>';
+    if (!append) {
+      container.innerHTML = '<div class="flex items-center justify-center py-4 text-xs text-apple-red">加载失败，请重试</div>';
+    }
   }
 }
 
-async function confirmSort(id, theme, tagsStr, existingTagsStr, name) {
-  const tags = tagsStr ? tagsStr.split(',').filter(Boolean) : [];
-  const existing_tags = existingTagsStr ? existingTagsStr.split(',').filter(Boolean) : [];
-  const folder = theme || undefined;
-  await api('POST', '/api/sort/confirm', { id, tags, existing_tags, folder, name });
-  // 从列表移除
-  const el = $(`inbox-${id}`);
-  if (el) el.remove();
-  updateInboxCount();
-  refresh();
+/** 追加单个建议标签到输入框 */
+function appendTag(id, tag) {
+  const input = $(`tags-${id}`);
+  if (!input) return;
+  const current = input.value.split(/[,，\s]+/).filter(Boolean);
+  if (!current.includes(tag)) {
+    current.push(tag);
+    input.value = current.join(', ');
+  }
 }
 
-async function skipSort(id, existingTags) {
+/** 应用全部建议标签 */
+function applyAllTags(id) {
+  const input = $(`tags-${id}`);
+  if (!input) return;
+  // 从 data 属性读取建议标签
+  const card = $(`inbox-${id}`);
+  if (!card) return;
+  const suggBtns = card.querySelectorAll('.text-apple-blue\\/70');
+  const tags = [];
+  suggBtns.forEach(b => { if (b.textContent !== '全部应用') tags.push(b.textContent); });
+  input.value = tags.join(', ');
+}
+
+async function confirmSort(id, name) {
+  const themeSel = $(`theme-${id}`);
+  const tagsInput = $(`tags-${id}`);
+  const selectedTheme = themeSel ? themeSel.value : '';
+  const tagsStr = tagsInput ? tagsInput.value : '';
+  const tags = tagsStr ? tagsStr.split(/[,，\s]+/).filter(Boolean) : [];
+  const btn = $(`confirm-${id}`);
+  if (btn) btn.disabled = true;
   try {
-    const tags = existingTags ? existingTags.split(',').filter(Boolean) : [];
-    await api('POST', '/api/sort/skip', { id, existing_tags: tags });
-    const el = $(`inbox-${id}`);
-    if (el) el.remove();
-    updateInboxCount();
-    refresh();
-  } catch (e) {
-    toast('⚠️ 跳过失败：网络错误');
-    console.error('skipSort error:', e);
-  }
-}
-
-function updateInboxCount() {
-  const remaining = ($('inbox-content') || document).querySelectorAll('[id^="inbox-"]').length;
-  $('inbox-total').textContent = remaining;
-  if (remaining === 0) {
-    $('inbox-content').innerHTML = '<p class="text-xs text-apple-muted">🎉 没有待分类素材</p>';
-  }
-}
-
-// 展开 inbox 时自动加载
-document.addEventListener('DOMContentLoaded', () => {
-  const section = $('inbox-section');
-  section.querySelector('summary').addEventListener('click', (e) => {
-    // 等浏览器 toggle 完成后
-    setTimeout(() => {
-      if (section.hasAttribute('open') && !$('inbox-content').dataset.loaded) {
-        loadInbox();
+    const result = await api('POST', '/api/sort/confirm', {
+      id, tags,
+      folder: selectedTheme || undefined,
+      name,
+      replace_tags: true,
+    });
+    if (result.ok === true) {
+      const el = $(`inbox-${id}`);
+      if (el) el.remove();
+      if (selectedTheme && tags.length > 0) {
+        toast(`✅ 已学会：${name} → ${selectedTheme}（标签：${tags.join(', ')}）`);
+      } else if (selectedTheme) {
+        toast(`✅ 已学会：${name} → ${selectedTheme}`);
+      } else {
+        toast(`✅ ${name} 已确认，未指定新主题`);
       }
-    }, 10);
-  });
-});
+      checkInboxDone();
+      refresh();
+    } else {
+      toast(`⚠️ 确认失败：${result.error || '未知错误'}`);
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    toast(`⚠️ 确认失败：${e.message}`);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function skipSort(id) {
+  const btn = $(`skip-${id}`);
+  if (btn) btn.disabled = true;
+  try {
+    const result = await api('POST', '/api/sort/skip', { id });
+    if (result.ok === true) {
+      const el = $(`inbox-${id}`);
+      if (el) el.remove();
+      toast(`✗ 已跳过，不再显示`);
+      checkInboxDone();
+      refresh();
+    } else {
+      toast(`⚠️ 跳过失败：${result.error || '未知错误'}`);
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    toast(`⚠️ 跳过失败：${e.message}`);
+    if (btn) btn.disabled = false;
+  }
+}
+
+function checkInboxDone() {
+  const remaining = $('inbox-content').querySelectorAll('[id^="inbox-"]').length;
+  if (remaining === 0) {
+    $('inbox-content').innerHTML = '<div class="flex items-center justify-center py-6 text-xs text-apple-muted">🎉 全部处理完毕！知识库已更新。</div>';
+  }
+}
+
+// ────────── 操作历史 ──────────
+
+async function loadHistory() {
+  const container = $('history-content');
+  try {
+    const data = await api('GET', '/api/history');
+    const items = data.items || [];
+    if (items.length === 0) {
+      container.innerHTML = '<p class="text-apple-muted text-xs text-center py-2">暂无操作记录</p>';
+      return;
+    }
+    container.innerHTML = items.map(h => {
+      const t = h.time ? new Date(h.time).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      const icon = h.status === 'success' ? '✅' : '❌';
+      const name = escapeHtml(h.filename || '');
+      const theme = escapeHtml(h.theme || '');
+      return `<div class="flex items-center gap-2 py-1 border-b border-apple-border last:border-0 text-[11px]">
+        <span>${icon}</span>
+        <span class="truncate flex-1">${name}${theme ? ' → ' + theme : ''}</span>
+        <span class="text-apple-muted flex-shrink-0">${t}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = '<p class="text-apple-red text-xs">加载失败</p>';
+  }
+}
+
+async function clearHistory() {
+  try {
+    const r = await api('POST', '/api/history/clear', {});
+    if (r.ok) {
+      $('history-content').innerHTML = '<p class="text-apple-muted text-xs text-center py-2">暂无操作记录</p>';
+      toast('🗑 操作历史已清空');
+    }
+  } catch (e) {
+    toast('⚠️ 清空失败');
+  }
+}
+
+// ────────── 置顶切换 ──────────
+
+async function clearAiCache() {
+  try {
+    const r = await api('POST', '/api/ai/cache/clear', {});
+    if (r.ok) {
+      const kb = r.cleared_bytes > 1024 ? `${(r.cleared_bytes / 1024).toFixed(1)} KB` : `${r.cleared_bytes} B`;
+      toast(`🗑 AI 缓存已清除（${kb}）`);
+    }
+  } catch (e) {
+    toast('⚠️ 清除失败');
+  }
+}
+
+let _pinned = false;
+
+async function togglePin() {
+  try {
+    _pinned = !_pinned;
+    const r = await api('POST', '/api/set-pinned', { pinned: _pinned });
+    if (!r.ok) throw new Error('操作失败');
+    const btn = $('pin-btn');
+    if (_pinned) {
+      btn.style.opacity = '1';
+      btn.style.color = '#0071e3';
+      btn.style.background = 'rgba(0,113,227,0.1)';
+      btn.style.borderColor = '#0071e3';
+      btn.title = '点击取消置顶';
+      toast('📌 面板已置顶');
+    } else {
+      btn.style.opacity = '';
+      btn.style.color = '';
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      btn.title = '置顶面板';
+      toast('📌 已取消置顶');
+    }
+  } catch (e) {
+    _pinned = !_pinned;
+    console.error('置顶操作失败:', e);
+    toast('⚠️ 置顶操作失败');
+  }
+}
 
 // ────────── 初始化 ──────────
 
+
 refresh();
-// 自动刷新（不再整页重载）
-setInterval(refresh, 30000);
+
+// 智能自动刷新：避免打断用户操作
+function isUserInteracting() {
+  const el = document.activeElement;
+  if (!el) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA';
+}
+
+let _refreshTimer = null;
+function scheduleRefresh() {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(() => {
+    if (!isUserInteracting()) refresh();
+    scheduleRefresh();
+  }, 15000);
+}
+
+// 仅在面板可见时刷新
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
+  } else {
+    if (!isUserInteracting()) refresh();
+    scheduleRefresh();
+  }
+});
+scheduleRefresh();
 </script>
 </body>
 </html>

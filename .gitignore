@@ -29,3 +29,13 @@ config.yaml
 
 # Ad-hoc tests
 test_*.py
+
+# Coverage
+.coverage
+htmlcov/
+
+# Agent workspace
+.sisyphus/
+
+# External reference
+chatgpt分析与优化建议.md

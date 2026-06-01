@@ -6,7 +6,6 @@
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 from eagle_watcher.config import get_current_project, get_project_info
 from eagle_watcher.knowledge import match_by_filename, match_by_source, record_miss
@@ -43,7 +42,7 @@ def is_vague_name(filename: str) -> bool:
         # 检查是否包含连续3个以上元音或辅音（可能是无意义串）
         if not re.search(r"[aeiou]{3}|[bcdfghjklmnpqrstvwxyz]{4}", stem, re.I):
             # 检查是否是常见单词
-            common_words = {"image", "photo", "pic", "img", "pic", "file", "doc", "test"}
+            common_words = {"image", "photo", "pic", "img", "file", "doc", "test"}
             if stem.lower() not in common_words:
                 return True
 

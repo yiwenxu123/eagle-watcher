@@ -4,6 +4,10 @@ import warnings
 warnings.filterwarnings("ignore", message=".*NotOpenSSLWarning.*")
 
 import logging
+import sys
+if sys.platform != "darwin":
+    print("错误：Eagle Watcher 仅支持 macOS")
+    sys.exit(1)
 import os
 import threading
 import time
@@ -15,20 +19,6 @@ from eagle_watcher.services.state_manager import get_state_manager
 from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 
 
-def setup_logging():
-    log_dir = Path(DATA_DIR) / "log"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"main_{datetime.now().strftime('%Y%m%d')}.log"
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-        handlers=[
-            logging.FileHandler(str(log_file), encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
-
-
 def start_daily_reset():
     def _loop():
         while True:
@@ -37,7 +27,28 @@ def start_daily_reset():
             sleep_sec = (tomorrow - now).total_seconds()
             time.sleep(sleep_sec)
             get_state_manager().reset_daily_flags()
+            # 每日清理过期知识库条目
+            try:
+                from eagle_watcher.knowledge import cleanup_stale_entries
+                cleanup_stale_entries()
+            except Exception as e:
+                logging.getLogger("main").warning("知识库清理失败: %s", e)
     threading.Thread(target=_loop, daemon=True, name="daily-reset").start()
+
+
+def _wait_for_eagle(eagle: EagleAPI):
+    """Eagle 离线时等待重连，恢复后自动启动 watcher"""
+    _LOG = logging.getLogger("main")
+    _LOG.info("等待 Eagle 上线，每 30 秒重试...")
+    while True:
+        time.sleep(30)
+        if eagle.ping():
+            _LOG.info("Eagle 已上线，启动 watcher")
+            get_state_manager().set_eagle_online(True)
+            from eagle_watcher.watcher import run_watcher
+            watcher_thread = threading.Thread(target=run_watcher, daemon=True, args=(eagle,))
+            watcher_thread.start()
+            return
 
 
 def first_run_check() -> bool:
@@ -67,6 +78,7 @@ def first_run_check() -> bool:
 
 
 def main():
+    from eagle_watcher._logging import setup_logging
     setup_logging()
     _LOG = logging.getLogger("main")
     ensure_data_dir()
@@ -78,33 +90,36 @@ def main():
     cfg = load_config()
 
     # 验证配置
-    errors = validate_config(cfg)
+    errors, warnings = validate_config(cfg)
+    if warnings:
+        for w in warnings:
+            _LOG.warning(f"配置警告: {w}")
     if errors:
-        for error in errors:
-            _LOG.error(f"配置错误：{error}")
-        _LOG.error("请检查 ~/.eagle-watcher/config.yaml 配置文件")
-        return
+        for e in errors:
+            _LOG.error(f"配置错误: {e}")
+        # DON'T return here - continue to start GUI
 
-    # 检查 AI API Key
-    if not os.environ.get("DASHSCOPE_API_KEY"):
-        _LOG.warning("DASHSCOPE_API_KEY 未设置，AI 视觉分析不可用")
-        print("  ⚠️  环境变量 DASHSCOPE_API_KEY 未设置，AI 视觉分析功能不可用")
-        print("     如需使用 AI 自动分类，请先设置：export DASHSCOPE_API_KEY=你的Key\n")
+    # 检查 AI API Key（config.yaml 优先，env 回退）
+    ai_key = cfg.get("ai", {}).get("api_key") or os.environ.get("DASHSCOPE_API_KEY")
+    if not ai_key:
+        _LOG.warning("AI API Key 未配置（config.yaml 或 DASHSCOPE_API_KEY），AI 视觉分析不可用")
+        print("  ⚠️  AI API Key 未配置，AI 视觉分析功能不可用")
+        print("     请设置 ~/.eagle-watcher/config.yaml 中 ai.api_key 或环境变量 DASHSCOPE_API_KEY\n")
 
     eagle = create_eagle_api(cfg)
 
     if not eagle.ping():
-        _LOG.warning("Eagle 未运行，菜单栏仍可启动但 watcher 暂停")
+        _LOG.warning("Eagle 未运行，等待重连...")
         get_state_manager().set_eagle_online(False)
+        # 启动重连线程，Eagle 上线后自动启动 watcher
+        threading.Thread(target=_wait_for_eagle, daemon=True, args=(eagle,)).start()
     else:
         _LOG.info("Eagle 连接正常，启动 watcher")
         get_state_manager().set_eagle_online(True)
-
-    from eagle_watcher.watcher import run_watcher
-
-    watcher_thread = threading.Thread(target=run_watcher, daemon=True, args=(eagle,))
-    watcher_thread.start()
-    _LOG.info("watcher 线程已启动")
+        from eagle_watcher.watcher import run_watcher
+        watcher_thread = threading.Thread(target=run_watcher, daemon=True, args=(eagle,))
+        watcher_thread.start()
+        _LOG.info("watcher 线程已启动")
 
     try:
         from eagle_watcher.menu_app import EagleWatcherMenu
