@@ -45,6 +45,7 @@ def _default_config() -> dict:
         },
         "paths": {
             "downloads": str(Path.home() / "Downloads"),
+            "extra_watch_dirs": [],
             "watch_interval": 2.0,
         },
         "delete_after_import": "trash",
@@ -149,6 +150,15 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         downloads = paths_cfg["downloads"]
         if not os.path.isdir(downloads):
             errors.append(f"下载目录不存在：{downloads}")
+
+    # 验证额外监控目录
+    extra_dirs = paths_cfg.get("extra_watch_dirs", [])
+    if not isinstance(extra_dirs, list):
+        warnings.append("paths.extra_watch_dirs 应为列表格式，将被忽略")
+    else:
+        for d in extra_dirs:
+            if not isinstance(d, str) or not d.strip():
+                warnings.append(f"paths.extra_watch_dirs 包含无效路径：{d}")
 
     # 验证监控间隔
     interval = paths_cfg.get("watch_interval", 2.0)

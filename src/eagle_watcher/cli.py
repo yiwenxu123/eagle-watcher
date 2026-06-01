@@ -30,10 +30,19 @@ def main():
     parser.add_argument("--project", help="主题名", default=None)
     parser.add_argument("--tags", help="标签，逗号分隔", default="")
     parser.add_argument("--folder", help="Eagle 文件夹名", default=None)
+    parser.add_argument("--watch-dir", help="持续监控指定目录（可多次使用）",
+                        action="append", dest="watch_dirs", default=None)
     args = parser.parse_args()
 
+    # --watch-dir 模式：启动目录监控
+    if args.watch_dirs:
+        from eagle_watcher.watcher import run_watcher
+        ensure_data_dir()
+        run_watcher(extra_dirs=args.watch_dirs)
+        return
+
     if not args.file and not args.url:
-        print("❌ 请提供 --file 或 --url")
+        print("❌ 请提供 --file、--url 或 --watch-dir")
         sys.exit(1)
 
     ensure_data_dir()

@@ -211,7 +211,47 @@ def _on_file_detected(eagle: EagleAPI, file_path: str, attempt: int = 0):
         _processing_files.discard(file_path)
 
 
-def run_watcher(eagle: Optional[EagleAPI] = None):
+def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None) -> list[str]:
+    """解析需要监控的目录列表
+
+    合并 downloads + extra_watch_dirs (from config) + extra_dirs (from caller),
+    去重并过滤出不存在的目录。
+    """
+    dirs: list[str] = []
+    downloads = cfg.get("paths", {}).get("downloads", "")
+    if downloads:
+        expanded = os.path.expanduser(downloads)
+        if Path(expanded).is_dir():
+            dirs.append(expanded)
+        else:
+            _LOG.warning("下载目录不存在，跳过: %s", downloads)
+
+    configured_extra = cfg.get("paths", {}).get("extra_watch_dirs", [])
+    if isinstance(configured_extra, list):
+        for d in configured_extra:
+            expanded = os.path.expanduser(d)
+            if expanded in dirs:
+                continue
+            if Path(expanded).is_dir():
+                dirs.append(expanded)
+            else:
+                _LOG.warning("额外监控目录不存在，跳过: %s", d)
+
+    if extra_dirs:
+        for d in extra_dirs:
+            expanded = os.path.expanduser(d)
+            if expanded in dirs:
+                continue
+            if Path(expanded).is_dir():
+                dirs.append(expanded)
+            else:
+                _LOG.warning("指定目录不存在，跳过: %s", d)
+
+    return dirs
+
+
+def run_watcher(eagle: Optional[EagleAPI] = None,
+                extra_dirs: Optional[list[str]] = None):
     get_state_manager().set_watcher_running(True)
     ensure_data_dir()
     cfg = load_config()
@@ -219,20 +259,22 @@ def run_watcher(eagle: Optional[EagleAPI] = None):
     if eagle is None:
         eagle = create_eagle_api(cfg)
 
-    downloads_dir = cfg["paths"]["downloads"]
-    if not Path(downloads_dir).is_dir():
-        _LOG.error("下载目录不存在: %s", downloads_dir)
-        print(f"❌ 下载目录不存在: {downloads_dir}")
+    watch_dirs = _resolve_watch_dirs(cfg, extra_dirs)
+    if not watch_dirs:
+        _LOG.error("没有有效的监控目录")
+        print("❌ 没有有效的监控目录")
         return
 
     def callback(fp: str):
         _on_file_detected(eagle, fp)
 
     poll_interval = cfg.get("paths", {}).get("watch_interval", 1.0)
-    watcher = create_watcher(downloads_dir, callback, poll_interval=poll_interval)
-    watcher.start()
-
-    print(f"👀 监控已启动：{downloads_dir}")
+    watchers = []
+    for d in watch_dirs:
+        w = create_watcher(d, callback, poll_interval=poll_interval)
+        w.start()
+        watchers.append(w)
+        print(f"👀 监控已启动：{d}")
 
     _last_cleanup_time = time.monotonic()
 
@@ -261,7 +303,8 @@ def run_watcher(eagle: Optional[EagleAPI] = None):
     except KeyboardInterrupt:
         print("\n👋 停止监控")
     finally:
-        watcher.stop()
+        for w in watchers:
+            w.stop()
 
 
 def main():

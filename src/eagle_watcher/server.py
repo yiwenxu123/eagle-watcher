@@ -70,6 +70,30 @@ _panel_session_token: str = ""
 _panel_token_initialized = False
 
 
+def _get_watch_dirs_from_config() -> list[dict]:
+    """从配置读取所有监控目录信息"""
+    cfg = load_config()
+    dirs = []
+    downloads = cfg.get("paths", {}).get("downloads", "")
+    if downloads:
+        expanded = os.path.expanduser(downloads)
+        dirs.append({
+            "path": expanded,
+            "exists": Path(expanded).is_dir(),
+            "type": "downloads",
+        })
+    extra = cfg.get("paths", {}).get("extra_watch_dirs", [])
+    if isinstance(extra, list):
+        for d in extra:
+            expanded = os.path.expanduser(d)
+            dirs.append({
+                "path": expanded,
+                "exists": Path(expanded).is_dir(),
+                "type": "extra",
+            })
+    return dirs
+
+
 def _ensure_panel_token():
     global _panel_session_token, _panel_token_initialized
     if not _panel_token_initialized:
@@ -398,6 +422,7 @@ class PanelHandler(BaseHandler):
             "last_processed": sm.get_last_processed(),
             "ai_configured": bool(_get_api_key()),
             "ai_model": _get_model() if _get_api_key() else None,
+            "watch_dirs": _get_watch_dirs_from_config(),
         }
         _status_cache["data"] = result
         _status_cache["ts"] = now
@@ -780,6 +805,8 @@ class PanelHandler(BaseHandler):
             elif path == "/api/history":
                 from eagle_watcher.services.history import recent
                 self._send_json(200, {"items": recent(50)})
+            elif path == "/api/watch-dirs":
+                self._send_json(200, {"dirs": _get_watch_dirs_from_config()})
             else:
                 self._send_json(404, {"error": "not found"})
 
