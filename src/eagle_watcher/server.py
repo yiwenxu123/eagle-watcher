@@ -39,6 +39,8 @@ from eagle_watcher.config import (
 from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 from eagle_watcher.services.state_manager import get_state_manager
 from eagle_watcher.knowledge import match_by_filename, record_match
+from eagle_watcher.analyzer import decide
+from eagle_watcher.watcher import scan_directory, get_scan_progress
 
 _LOG = logging.getLogger("server")
 
@@ -50,20 +52,41 @@ _HTML_PATH = Path(__file__).parent / "pyui" / "panel.html"
 
 # 状态缓存：避免每 5 秒重复查询 Eagle 全量数据
 _status_cache: dict = {"data": None, "ts": 0}
+_status_cache_lock = threading.Lock()
 _STATUS_CACHE_TTL = 10  # 秒
+
+# 可复用的线程池（避免每次 /api/status 创建新池）
+_status_pool = None
+_status_pool_lock = threading.Lock()
+
+# Eagle 离线状态缓存：离线时降频 ping，避免每 5 秒连一次
+_eagle_offline_since: float = 0  # 上次 ping 失败的时间戳
+_EAGLE_OFFLINE_RETRY_INTERVAL = 30  # 离线后每 30 秒再试一次
+
+
+def _get_status_pool():
+    global _status_pool
+    if _status_pool is None:
+        with _status_pool_lock:
+            if _status_pool is None:
+                from concurrent.futures import ThreadPoolExecutor
+                _status_pool = ThreadPoolExecutor(max_workers=3)
+    return _status_pool
 
 
 def _invalidate_status_cache():
     """清除状态缓存，强制下次 /api/status 重新计算"""
-    global _status_cache
-    _status_cache["data"] = None
+    global _status_cache, _eagle_offline_since
+    with _status_cache_lock:
+        _status_cache["data"] = None
+        _eagle_offline_since = 0  # 同时重置离线状态，允许下次请求重试
 
 
-# 幂等性缓存：key → timestamp，防止重复请求
+# 幂等性缓存：有序字典 + 惰性过期，防止无限增长
 _idempotency_cache: dict[str, float] = {}
 _idempotency_lock = threading.Lock()
 _IDEMPOTENCY_TTL = 30  # seconds
-_idempotency_call_count = 0
+_IDEMPOTENCY_MAX_KEYS = 200  # 防止内存泄漏的硬上限
 
 # 面板服务器 session token：启动时生成，注入前端页面，验证 API 请求
 _panel_session_token: str = ""
@@ -258,6 +281,15 @@ class RemoteHandler(BaseHandler):
         if not eagle:
             return
 
+        # 当未指定 project 时，通过 decide() 决策引擎自动判断
+        if not project:
+            filename = Path(file_path).name if file_path else Path(file_url).name
+            decision = decide(filename)
+            if decision.get("theme"):
+                project = decision["theme"]
+                tags = list(dict.fromkeys(decision.get("tags", []) + tags))
+                folder = folder or decision.get("folder", project)
+
         target_folder = folder or project
         folder_id = None
         if target_folder:
@@ -336,16 +368,25 @@ class PanelHandler(BaseHandler):
     # ────────── API: 状态 ──────────
 
     def _handle_api_status(self):
-        global _status_cache
+        global _status_cache, _eagle_offline_since
         now = time.time()
-        # 缓存命中则直接返回
-        if _status_cache["data"] and now - _status_cache["ts"] < _STATUS_CACHE_TTL:
-            self._send_json(200, _status_cache["data"])
-            return
+        # 缓存命中则直接返回（加锁保证原子读取）
+        with _status_cache_lock:
+            if _status_cache["data"] and now - _status_cache["ts"] < _STATUS_CACHE_TTL:
+                self._send_json(200, _status_cache["data"])
+                return
 
         sm = get_state_manager()
         api = create_eagle_api(load_config())
-        online = api.ping()
+        # 离线降频：如果最近 ping 失败过，跳过本次 ping（仍返回缓存或降级数据）
+        if _eagle_offline_since and now - _eagle_offline_since < _EAGLE_OFFLINE_RETRY_INTERVAL:
+            online = False
+        else:
+            online = api.ping()
+            if not online:
+                _eagle_offline_since = now
+            else:
+                _eagle_offline_since = 0
 
         today_count, inbox_count = 0, 0
         local_cats = get_categories()
@@ -354,17 +395,17 @@ class PanelHandler(BaseHandler):
         if online:
             try:
                 from datetime import datetime
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                from concurrent.futures import as_completed
                 today = datetime.now().strftime("%Y-%m-%d")
 
-                with ThreadPoolExecutor(max_workers=3) as pool:
-                    fut_recent = pool.submit(api.list_items, order_by="-btime", limit=100)
-                    fut_inbox = pool.submit(api.list_items, tags="待分类")
-                    fut_folders = pool.submit(api.list_folders)
+                pool = _get_status_pool()
+                fut_recent = pool.submit(api.list_items, order_by="-btime", limit=100)
+                fut_inbox = pool.submit(api.list_items, tags="待分类")
+                fut_folders = pool.submit(api.list_folders)
 
-                    recent_items = fut_recent.result()
-                    inbox_items = fut_inbox.result()
-                    eagle_folders = fut_folders.result()
+                recent_items = fut_recent.result()
+                inbox_items = fut_inbox.result()
+                eagle_folders = fut_folders.result()
 
                 for item in recent_items:
                     btime = item.get("btime", 0) / 1000
@@ -432,8 +473,9 @@ class PanelHandler(BaseHandler):
             "ai_model": _get_model() if _get_api_key() else None,
             "watch_dirs": _get_watch_dirs_from_config(),
         }
-        _status_cache["data"] = result
-        _status_cache["ts"] = now
+        with _status_cache_lock:
+            _status_cache["data"] = result
+            _status_cache["ts"] = now
         self._send_json(200, result)
 
     # ────────── API: 项目操作 ──────────
@@ -506,14 +548,12 @@ class PanelHandler(BaseHandler):
             self._send_json(400, {"error": "name is required"})
             return
 
-        if self._check_idempotency(body, f"del_cat:{name}"):
-            self._send_json(200, {"ok": True, "cached": True})
-            return
-
-        # 级联删除需要显式确认
+        # 级联删除需要显式确认 — 在确认前不应用幂等性缓存
         if not body.get("confirm"):
             projects = get_projects()
             affected = [pn for pn, pi in projects.items() if pi.get("category") == name]
+            if self._check_idempotency(body, f"del_cat_preconfirm:{name}"):
+                pass  # 幂等确认检查：已答复过
             self._send_json(400, {
                 "error": "cascade_confirm_required",
                 "affected_projects": affected,
@@ -564,6 +604,8 @@ class PanelHandler(BaseHandler):
                 "partial": True,
             })
         else:
+            # 全量删除成功后才缓存幂等性 key，避免部分失败后重试被误判为已处理
+            self._check_idempotency(body, f"del_cat:{name}")
             _invalidate_status_cache()
             self._send_json(200, {"ok": True})
     # ────────── API: 通用箱整理 ──────────
@@ -736,6 +778,48 @@ class PanelHandler(BaseHandler):
         _invalidate_status_cache()
         self._send_json(200, {"ok": True, "path": expanded, "removed": removed})
 
+    def _handle_trigger_picker(self):
+        from eagle_watcher.pyui.panel import trigger_folder_picker
+        trigger_folder_picker()
+        self._send_json(200, {"ok": True})
+
+    def _handle_picker_result(self):
+        from eagle_watcher.pyui.panel import get_picker_result
+        status, path = get_picker_result()
+        if status == "done" and path:
+            sm = get_state_manager()
+            sm.add_temp_watch_dir(path)
+            _invalidate_status_cache()
+            self._send_json(200, {"status": "done", "path": path})
+        elif status == "cancelled":
+            self._send_json(200, {"status": "cancelled"})
+        else:
+            self._send_json(200, {"status": "pending"})
+
+    def _handle_watch_dir_scan(self, body: dict):
+        path = body.get("path", "").strip()
+        if not path:
+            self._send_json(400, {"error": "path is required"})
+            return
+        expanded = os.path.expanduser(path)
+        if not Path(expanded).is_dir():
+            self._send_json(400, {"error": f"目录不存在: {expanded}"})
+            return
+        sm = get_state_manager()
+        if expanded not in sm.get_temp_watch_dirs():
+            self._send_json(400, {"error": "只支持扫描临时监控目录"})
+            return
+        progress = get_scan_progress()
+        if progress.get("status") == "scanning":
+            self._send_json(409, {"error": "已有扫描进行中", "progress": progress})
+            return
+        api = self._eagle()
+        if not api:
+            return
+        file_filter = body.get("filter") or None
+        scan_directory(api, expanded, recursive=True, file_filter=file_filter)
+        self._send_json(200, {"ok": True, "path": expanded, "filter": file_filter or "default", "message": "扫描已启动"})
+
     # ────────── API: AI 缓存管理 ──────────
 
     def _handle_ai_cache_clear(self):
@@ -763,6 +847,16 @@ class PanelHandler(BaseHandler):
         if not api:
             return
 
+        # 当未指定 project 时，通过 decide() 决策引擎自动判断
+        if not project:
+            filename = Path(file_path).name if file_path else Path(file_url).name
+            decision = decide(filename)
+            if decision.get("theme"):
+                project = decision["theme"]
+                # 决策引擎返回的标签作为默认标签，合并用户传入的标签
+                tags = list(dict.fromkeys(decision.get("tags", []) + tags))
+                folder = folder or decision.get("folder", project)
+
         target_folder = folder or project
         folder_id = None
         if target_folder:
@@ -782,6 +876,14 @@ class PanelHandler(BaseHandler):
             return
 
         if result.get("status") == "success":
+            # 学习知识：如果有来自决策引擎的项目匹配，记录到知识库
+            if project and file_path:
+                try:
+                    from eagle_watcher.knowledge import record_match
+                    filename = Path(file_path).stem if file_path else Path(file_url).stem
+                    record_match(str(filename), filename, project, tags)
+                except Exception:
+                    pass
             _invalidate_status_cache()
             self._send_json(200, {"status": "success", "data": {"tags": tags, "folder": target_folder}})
         else:
@@ -792,18 +894,17 @@ class PanelHandler(BaseHandler):
     @staticmethod
     def _check_idempotency(body: dict, name: str) -> bool:
         """检查 idempotency_key，已处理返回 True，否则记录并返回 False。"""
-        global _idempotency_cache, _idempotency_call_count
+        global _idempotency_cache
         idemp_key = body.get("idempotency_key") or f"{name}:{time.time():.0f}"
         now = time.time()
         with _idempotency_lock:
             if idemp_key in _idempotency_cache:
                 return True
-            _idempotency_cache[idemp_key] = now
-            _idempotency_call_count += 1
-            if _idempotency_call_count >= 100:
+            # 在插入新 key 前检查上限，淘汰最旧条目
+            if len(_idempotency_cache) >= _IDEMPOTENCY_MAX_KEYS:
                 cutoff = now - _IDEMPOTENCY_TTL
                 _idempotency_cache = {k: ts for k, ts in _idempotency_cache.items() if ts > cutoff}
-                _idempotency_call_count = 0
+            _idempotency_cache[idemp_key] = now
         return False
 
     def _route(self):
@@ -842,6 +943,23 @@ class PanelHandler(BaseHandler):
                 self._send_json(200, {"items": recent(50)})
             elif path == "/api/watch-dirs":
                 self._send_json(200, {"dirs": _get_watch_dirs_from_config()})
+            elif path == "/api/watch-dirs/scan-status":
+                self._send_json(200, get_scan_progress())
+            elif path == "/api/watch-dirs/picker-result":
+                self._handle_picker_result()
+            elif path == "/api/watch-dirs/scan-preview":
+                import urllib.parse
+                params = urllib.parse.parse_qs(parsed.query)
+                scan_path = params.get("path", [None])[0]
+                if not scan_path:
+                    self._send_json(400, {"error": "path is required"})
+                    return
+                from eagle_watcher.watcher import count_files_by_type
+                stats = count_files_by_type(scan_path)
+                self._send_json(200, stats)
+            elif path == "/api/watch-dirs/filter-presets":
+                from eagle_watcher.watcher import get_filter_presets
+                self._send_json(200, {"presets": get_filter_presets()})
             else:
                 self._send_json(404, {"error": "not found"})
 
@@ -880,6 +998,10 @@ class PanelHandler(BaseHandler):
                 self._handle_watch_dirs_add(body)
             elif path == "/api/watch-dirs/remove":
                 self._handle_watch_dirs_remove(body)
+            elif path == "/api/watch-dirs/scan":
+                self._handle_watch_dir_scan(body)
+            elif path == "/api/watch-dirs/trigger-picker":
+                self._handle_trigger_picker()
             elif path == "/api/set-pinned":
                 self._handle_set_pinned(body)
             elif path == "/api/history/clear":

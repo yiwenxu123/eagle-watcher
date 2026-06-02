@@ -20,7 +20,7 @@ IMAGE_EXTENSIONS = {
 
 
 def is_vague_name(filename: str) -> bool:
-    """判断文件名是否模糊（纯数字/乱码/无意义），需要 AI 视觉识别。"""
+    """判断文件名是否模糊（纯数字/乱码/无意义/截图），需要 AI 视觉识别。"""
     stem = Path(filename).stem
 
     # 纯数字（至少5位）
@@ -45,6 +45,18 @@ def is_vague_name(filename: str) -> bool:
             common_words = {"image", "photo", "pic", "img", "file", "doc", "test"}
             if stem.lower() not in common_words:
                 return True
+
+    # ── 截图类文件名（中英文）──
+    # 最常见：用户手机截图、微信截图、浏览器截图
+    screenshot_keywords = {
+        "screenshot", "截屏", "截图", "屏幕快照", "屏幕截图",
+        "微信图片", "微信截图", "QQ截图", "QQ图片",
+        "WeChat", "IMG_", "mmexport", "wx_camera",
+    }
+    stem_lower = stem.lower()
+    for kw in screenshot_keywords:
+        if kw.lower() in stem_lower:
+            return True
 
     return False
 

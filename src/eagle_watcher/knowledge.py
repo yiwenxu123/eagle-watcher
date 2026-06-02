@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+_LOG = logging.getLogger("knowledge")
 _knowledge_lock = threading.RLock()
 
 DATA_DIR = Path.home() / ".eagle-watcher"
@@ -230,7 +231,6 @@ def cleanup_stale_entries(max_age_days: int = 90, min_confidence: float = 0.3) -
                     pass
 
         if to_delete:
-            _LOG = logging.getLogger("knowledge")
             _LOG.info("清理知识库: 删除 %d 个关键词条目", len(to_delete))
             for keyword in to_delete:
                 del mapping[keyword]

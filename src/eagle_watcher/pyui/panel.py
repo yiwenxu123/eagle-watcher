@@ -15,6 +15,10 @@ _current_panel: Optional['FloatingPanel'] = None
 # 线程安全的待处理 pin 状态（HTTP handler 存，主线程 _tick 消费）
 _pending_pinned: Optional[bool] = None
 
+# 文件夹选择器：HTTP handler 触发，主线程 NSOpenPanel，JS 轮询结果
+_pending_folder_picker: bool = False
+_picker_result: Optional[str] = None  # None=无, ""=用户取消, path=选中路径
+
 PANEL_WIDTH = 420
 PANEL_HEIGHT = 640
 PANEL_URL = "http://localhost:9801/panel"
@@ -69,6 +73,14 @@ class PanelDelegate(NSObject):
         return False
 
 
+# WKWebView 导航委托：页面加载完成后重新聚焦，确保键盘可用
+class WebViewDelegate(NSObject):
+    def webView_didFinishNavigation_(self, webview, navigation):
+        panel = webview.window()
+        if panel:
+            panel.makeFirstResponder_(webview)
+
+
 class FloatingPanel:
     """浮动 HUD 面板"""  # noqa: D400
 
@@ -76,6 +88,7 @@ class FloatingPanel:
         self._panel: Optional[AppKit.NSPanel] = None
         self._webview: Optional[WebKit.WKWebView] = None
         self._delegate: Optional[PanelDelegate] = None
+        self._nav_delegate: Optional[WebViewDelegate] = None
         self._pinned: bool = False
         self._need_refresh: bool = True  # 首次打开或 HTML 变更后需要刷新
 
@@ -167,6 +180,10 @@ class FloatingPanel:
         )
         content.addSubview_(drag_handle)
 
+        # 导航委托（页面加载后重新聚焦，确保 WKWebView 键盘可用）
+        nav_delegate = WebViewDelegate.alloc().init()
+        webview.setNavigationDelegate_(nav_delegate)
+
         url = NSURL.URLWithString_(PANEL_URL)
         req = NSURLRequest.requestWithURL_(url)
         webview.loadRequest_(req)
@@ -179,6 +196,7 @@ class FloatingPanel:
         self._panel = panel
         self._webview = webview
         self._delegate = delegate
+        self._nav_delegate = nav_delegate
         _current_panel = self
         _LOG.info("FloatingPanel 已创建")
 
@@ -194,6 +212,8 @@ class FloatingPanel:
         ))
         AppKit.NSApp.activateIgnoringOtherApps_(True)
         self._panel.makeKeyAndOrderFront_(None)
+        # WKWebView 需要成为 firstResponder 才能接收键盘输入
+        self._panel.makeFirstResponder_(self._webview)
 
     def hide(self):
         if self._panel and self._panel.isVisible():
@@ -236,6 +256,60 @@ def set_pinned(pinned: bool):
     """HTTP handler 调用的模块级函数（后台线程安全，不调用 AppKit）"""
     global _pending_pinned
     _pending_pinned = pinned
+
+
+# ────────── 文件夹选择器（NSOpenPanel）──────────
+
+def trigger_folder_picker():
+    """HTTP handler 调用：标记需要打开文件夹选择器"""
+    global _pending_folder_picker, _picker_result
+    _pending_folder_picker = True
+    _picker_result = None
+
+
+def get_picker_result() -> tuple[str, Optional[str]]:
+    """HTTP handler 调用：返回 (status, path)。
+    status: 'idle' | 'pending' | 'done' | 'cancelled'
+    """
+    global _picker_result
+    if _picker_result is None:
+        return ("pending" if _pending_folder_picker else "idle", None)
+    path = _picker_result
+    _picker_result = None
+    if path:
+        return ("done", path)
+    return ("cancelled", None)
+
+
+def apply_pending_folder_picker():
+    """在主线程调用：如果 pending，打开 NSOpenPanel 让用户选择文件夹"""
+    global _pending_folder_picker, _picker_result
+    if not _pending_folder_picker:
+        return
+    _LOG.info("apply_pending_folder_picker: 开始打开 NSOpenPanel")
+    try:
+        # LSUIElement 模式下必须先激活应用，否则 NSOpenPanel 无法接收事件
+        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        _LOG.info("NSApp activateIgnoringOtherApps 完成")
+        panel = AppKit.NSOpenPanel.openPanel()
+        panel.setCanChooseFiles_(False)
+        panel.setCanChooseDirectories_(True)
+        panel.setAllowsMultipleSelection_(False)
+        _LOG.info("开始 runModal")
+        result = panel.runModal()
+        _pending_folder_picker = False  # 在 runModal 之后标记完成，避免 HTTP handler 读到暂态的 idle
+        _LOG.info("runModal 返回: %s (NSModalResponseOK=%s)", result, AppKit.NSModalResponseOK)
+        if result == AppKit.NSModalResponseOK:
+            url = panel.URLs()[0]
+            _picker_result = url.path()
+            _LOG.info("文件夹选择器: %s", _picker_result)
+        else:
+            _picker_result = ""
+            _LOG.info("文件夹选择器: 用户取消")
+    except Exception as e:
+        _LOG.error("文件夹选择器错误: %s", e, exc_info=True)
+        _pending_folder_picker = False
+        _picker_result = ""
 
 
 def apply_pending_pinned():

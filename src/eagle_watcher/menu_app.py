@@ -8,7 +8,7 @@ from pathlib import Path
 import rumps
 
 from eagle_watcher.config import get_current_project, load_config
-from eagle_watcher.pyui.panel import apply_pending_pinned
+from eagle_watcher.pyui.panel import apply_pending_pinned, apply_pending_folder_picker
 
 _LOG = logging.getLogger("menu")
 
@@ -19,7 +19,8 @@ class EagleWatcherMenu(rumps.App):
         super().__init__(self._build_title(), icon=None)
         self._panel = None
         self._http_thread = None
-        self._watch_header = rumps.MenuItem("📂 监控目录")
+        self._watch_header_title = "📂 监控目录"
+        self._watch_header = rumps.MenuItem(self._watch_header_title)
         self._watch_items: list[rumps.MenuItem] = []
 
         self.quit_button = None
@@ -36,7 +37,8 @@ class EagleWatcherMenu(rumps.App):
     @staticmethod
     def _build_title() -> str:
         cur = get_current_project()
-        return (cur or "自动匹配")[:20]
+        label = cur or "自动匹配"
+        return (label[:19] + "…") if len(label) > 20 else label
 
     def _update_watch_items(self):
         cfg = load_config()
@@ -55,15 +57,15 @@ class EagleWatcherMenu(rumps.App):
         if not lines:
             lines.append("  (无)")
 
-        # 重建 watch 子菜单项
-        for item in self._watch_items:
-            if item in self.menu:
-                self.menu.remove(item)
-        self._watch_items.clear()
+        # 重建完整菜单（rumps.Menu 没有 remove，用 clear + add 最稳定）
+        self.menu.clear()
+        self.menu.add(self.open_btn)
+        self.menu.add(rumps.separator)
+        self.menu.add(self._watch_header)
         for text in lines:
-            item = rumps.MenuItem(text)
-            self._watch_items.append(item)
-            self.menu.insert_after(self._watch_header, item)
+            self.menu.add(rumps.MenuItem(text))
+        self.menu.add(rumps.separator)
+        self.menu.add(self.quit_btn)
 
     def _start_http(self):
         def _run():
@@ -83,6 +85,7 @@ class EagleWatcherMenu(rumps.App):
     def _tick(self, _):
         self.title = self._build_title()
         apply_pending_pinned()
+        apply_pending_folder_picker()
         if int(time.time()) % 60 < 5:
             self._update_watch_items()
 
