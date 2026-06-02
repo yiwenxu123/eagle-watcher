@@ -61,7 +61,7 @@ def first_run_check() -> bool:
         print(f"  {CONFIG_PATH}")
         print(f"\n使用前请完成以下步骤：")
         print(f"  1. 打开 Eagle")
-        print(f"  2. 进入 Eagle → 偏好设置 → 插件")
+        print(f"  2. 进入 Eagle → 设置 → 开发者选项")
         print(f"  3. 勾选「允许其他应用连接」")
         print(f"  4. 复制 API Token 到配置文件中的 eagle.token")
         print(f"  5. 保存后重新运行配置引导：python main.py\n")
@@ -69,7 +69,7 @@ def first_run_check() -> bool:
         # 发送 macOS 通知
         try:
             from eagle_watcher.notifier import notify
-            notify("素材管家", "欢迎使用！请先配置 Eagle API Token：\n打开 Eagle → 偏好设置 → 插件 → 复制 Token")
+            notify("素材管家", "欢迎使用！请先配置 Eagle API Token：\n打开 Eagle → 设置 → 开发者选项 → 复制 Token")
         except Exception:
             pass
         # 不再退出，继续启动 GUI

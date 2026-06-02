@@ -71,6 +71,18 @@
   .spinner { display: inline-block; width: 20px; height: 20px; border: 2.5px solid #e5e5ea; border-top-color: #0071e3; border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   summary { list-style: none; } summary::-webkit-details-marker { display: none; }
+  /* ── Modal 对话框（替代 WKWebView 不支持的 confirm/alert） ── */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .modal-overlay.active { opacity: 1; pointer-events: auto; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 20px; max-width: 300px; width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.15); }
+  .modal-msg { font-size: 13px; line-height: 1.5; color: #1d1d1f; margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  /* ── 帮助区 ── */
+  .help-section details { margin-bottom: 0; }
+  .help-section summary { font-size: 11px; color: #86868b; padding: 6px 0; cursor: pointer; }
+  .help-section summary:hover { color: #1d1d1f; }
+  .help-content { font-size: 11px; line-height: 1.6; color: #6b7280; padding: 4px 0 8px; }
+  .help-content code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 10px; color: #374151; }
 </style>
 </head>
 <body class="bg-apple-bg text-apple-text font-sans text-sm leading-relaxed select-none">
@@ -97,7 +109,7 @@
       </p>
       <ol class="text-[11px] text-apple-text/70 space-y-0.5 ml-4 list-decimal mb-2">
         <li>打开 <strong>Eagle</strong> 应用</li>
-        <li>进入 Eagle → <strong>偏好设置</strong> → <strong>插件</strong></li>
+        <li>进入 Eagle → <strong>设置</strong> → <strong>开发者选项</strong></li>
         <li>勾选「<strong>允许其他应用连接</strong>」</li>
         <li>复制显示的 API Token</li>
         <li>粘贴到 <code>~/.eagle-watcher/config.yaml</code> 的 <code>eagle.token</code> 字段</li>
@@ -143,12 +155,8 @@
         <span class="text-[10px] text-apple-muted uppercase tracking-wide">📂 监控目录</span>
       </div>
       <div id="watch-dirs-list" class="space-y-0.5"></div>
-      <div class="flex gap-1 mt-1.5">
-        <input id="watch-dir-input" type="text" placeholder="输入临时目录路径…"
-               class="flex-1 text-[11px] bg-white border border-apple-border rounded px-2 py-1 outline-none focus:ring-1 focus:ring-apple-blue/30"
-               onkeydown="if(event.key==='Enter')addWatchDir()">
-        <button onclick="addWatchDir()" class="text-[11px] text-apple-blue hover:text-apple-blue/70 px-2 whitespace-nowrap transition-colors">➕ 添加临时</button>
-      </div>
+      <div id="scan-status" class="hidden text-[10px] text-apple-muted mt-1 truncate"></div>
+      <button onclick="pickWatchDir()" class="w-full text-[11px] bg-white border border-dashed border-apple-border rounded px-3 py-1.5 text-apple-blue hover:bg-blue-50 transition-colors">+ 选择文件夹添加临时目录</button>
     </div>
 
     <!-- 教AI认识新素材 — 当前主题 + 待分类整合区 -->
@@ -234,9 +242,37 @@
       </div>
     </details>
 
+  <!-- 帮助区 -->
+  <div class="help-section bg-apple-card rounded-apple shadow-sm border border-apple-border px-3 py-1">
+    <details>
+      <summary class="select-none flex items-center gap-1">📖 帮助</summary>
+      <div class="help-content space-y-1.5">
+        <p><strong>监控目录</strong></p>
+        <p>• <strong>长期目录</strong>——在 <code>config.yaml</code> 中配置，不可从面板移除</p>
+        <p>• <strong>临时目录</strong>——通过面板添加，仅当前运行期有效。可扫描其中所有文件批量入库</p>
+        <p class="mt-1"><strong>AI 教学</strong></p>
+        <p>• 为素材选择主题和标签，点击「教AI认识它」后，AI 学会下次自动识别</p>
+        <p>• 文件名模糊时（纯数字/乱码），AI 自动调用视觉分析识别内容</p>
+        <p class="mt-1"><strong>配置</strong></p>
+        <p>• 编辑 <code>~/.eagle-watcher/config.yaml</code> 修改 Eagle Token 和长期目录</p>
+      </div>
+    </details>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="sticky bottom-0 bg-gray-800 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 whitespace-nowrap w-full text-center"></div>
 
+  </div>
+
+  <!-- Modal 对话框（替代 WKWebView 不支持的 confirm/alert） -->
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-msg" id="modal-message"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel-btn" class="btn-secondary" style="display:none">取消</button>
+        <button id="modal-ok-btn" class="btn-primary">确定</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -272,31 +308,141 @@ async function api(method, path, body) {
   }
 }
 
-async function addWatchDir() {
-  const input = $('watch-dir-input');
-  const path = input.value.trim();
-  if (!path) { return; }
-  input.disabled = true;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 2500);
+}
+
+async function pickWatchDir() {
+  console.log('[picker] 开始选择文件夹');
   try {
-    await api('POST', '/api/watch-dirs/add', {path});
-    input.value = '';
-    refresh();
+    const r = await api('POST', '/api/watch-dirs/trigger-picker');
+    console.log('[picker] trigger-picker 响应:', r);
+    toast('⏳ 请在弹出的对话框中选择文件夹…');
+    let polls = 0;
+    const pollTimer = setInterval(async () => {
+      polls++;
+      try {
+        const res = await api('GET', '/api/watch-dirs/picker-result');
+        console.log('[picker] 轮询 #' + polls + ':', res.status);
+        if (res.status === 'done') {
+          console.log('[picker] 成功选择:', res.path);
+          clearInterval(pollTimer);
+          refresh();
+          toast('✅ 已添加临时目录');
+        } else if (res.status === 'cancelled') {
+          console.log('[picker] 用户取消');
+          clearInterval(pollTimer);
+          toast('已取消');
+        }
+      } catch (e) {
+        console.warn('[picker] 轮询失败:', e.message);
+        clearInterval(pollTimer);
+      }
+    }, 1000);
+    setTimeout(() => clearInterval(pollTimer), 120000);
   } catch (e) {
-    alert(`添加失败: ${e.message}`);
-  } finally {
-    input.disabled = false;
-    input.focus();
+    console.error('[picker] 触发失败:', e.message);
+    toast('⚠️ 操作失败: ' + e.message);
   }
 }
 
 async function removeWatchDir(path) {
-  if (!confirm(`确定停止监控并移除「${path}」？`)) return;
+  if (!(await confirmAsync(`确定停止监控并移除「${path}」？`))) return;
   try {
     await api('POST', '/api/watch-dirs/remove', {path});
     refresh();
   } catch (e) {
-    alert(`移除失败: ${e.message}`);
+    toast('⚠️ 移除失败: ' + e.message);
   }
+}
+
+let _scanTimer = null;
+
+// 自定义对话框（替代 WKWebView 不支持的 confirm/alert）
+function _modalCleanup() {
+  const overlay = $('modal-overlay');
+  overlay.classList.remove('active');
+  overlay.onclick = null;
+}
+
+function confirmAsync(msg) {
+  return new Promise(resolve => {
+    const overlay = $('modal-overlay');
+    $('modal-message').textContent = msg;
+    $('modal-cancel-btn').style.display = '';
+    $('modal-ok-btn').textContent = '确定';
+    overlay.classList.add('active');
+    const done = result => { _modalCleanup(); resolve(result); };
+    $('modal-ok-btn').onclick = () => done(true);
+    $('modal-cancel-btn').onclick = () => done(false);
+    overlay.onclick = e => { if (e.target === overlay) done(false); };
+  });
+}
+
+function alertAsync(msg) {
+  return new Promise(resolve => {
+    const overlay = $('modal-overlay');
+    $('modal-message').textContent = msg;
+    $('modal-cancel-btn').style.display = 'none';
+    $('modal-ok-btn').textContent = '知道了';
+    overlay.classList.add('active');
+    const done = () => { _modalCleanup(); resolve(); };
+    $('modal-ok-btn').onclick = done;
+    overlay.onclick = e => { if (e.target === overlay) done(); };
+  });
+}
+
+
+
+async function scanDir(btn) {
+  try {
+    // 从按钮前一个兄弟元素读取 filter 选择器
+    let filter = '';
+    const sel = btn.previousElementSibling;
+    if (sel && sel.tagName === 'SELECT') filter = sel.value;
+    // 从 select 的 data-scan-path 取路径
+    const path = filter ? (sel.getAttribute('data-scan-path') || '') : btn.getAttribute('data-path');
+    // 扫描前预览：统计文件数量和类型
+    const preview = await api('GET', '/api/watch-dirs/scan-preview?path=' + encodeURIComponent(path));
+    let msg = `确定扫描该目录？共 ${preview.total} 个文件`;
+    if (preview.extensions && preview.total > 0) {
+      const extList = Object.entries(preview.extensions)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([ext, count]) => `  ${ext} × ${count}`)
+        .join('\n');
+      msg += `\n\n${extList}`;
+      if (Object.keys(preview.extensions).length > 8) {
+        msg += `\n  …还有 ${Object.keys(preview.extensions).length - 8} 种类型`;
+      }
+    }
+    if (!(await confirmAsync(msg))) return;
+    await api('POST', '/api/watch-dirs/scan', {path, filter});
+    refresh();
+  } catch (e) {
+    toast('⚠️ 扫描启动失败: ' + e.message);
+  }
+}
+
+function _scanPoll() {
+  if (_scanTimer) clearTimeout(_scanTimer);
+  _scanTimer = setTimeout(async () => {
+    try {
+      const p = await api('GET', '/api/watch-dirs/scan-status');
+      const scanStatus = $('scan-status');
+      if (p.status === 'scanning' && scanStatus) {
+        scanStatus.textContent = `⏳ 扫描中: ${p.processed}/${p.total} (失败 ${p.failed})`;
+        _scanPoll();
+      } else {
+        refresh();
+      }
+    } catch (_) {
+      _scanPoll();
+    }
+  }, 2000);
 }
 
 async function refresh() {
@@ -349,20 +495,75 @@ async function refresh() {
     // 监控目录列表
     const watchSection = $('watch-dirs-section');
     const watchList = $('watch-dirs-list');
+    const scanStatus = $('scan-status');
     if (watchSection && watchList) {
       const dirs = data.watch_dirs || [];
       if (dirs.length > 0) {
         watchSection.classList.remove('hidden');
+        let scanProgress = {};
+        try {
+          scanProgress = await api('GET', '/api/watch-dirs/scan-status');
+        } catch (_) {}
+        const scanning = scanProgress.status === 'scanning';
+        // 加载过滤预设
+        let filterPresets = {};
+        try {
+          const fp = await api('GET', '/api/watch-dirs/filter-presets');
+          filterPresets = fp.presets || {};
+        } catch (_) {}
+        const filterOptions = Object.entries(filterPresets).map(([k, v]) =>
+          `<option value="${k}">${v.label}</option>`
+        ).join('');
         watchList.innerHTML = dirs.map(d => {
-          const icon = d.exists ? '✅' : '❌';
-          const label = d.type === 'extra' ? '  (额外)' : '';
           const parts = d.path.replace(/\/$/, '').split('/');
           const short = parts.length > 2 ? '…/' + parts.slice(-2).join('/') : d.path;
-          const rmBtn = d.type === 'temp'
-            ? ` <a href="#" onclick="removeWatchDir('${d.path.replace(/'/g, "\\'")}');return false" class="text-red-400 hover:text-red-600 no-underline" title="移除临时目录">✕</a>`
-            : '';
-          return `<div class="text-[11px] text-apple-muted truncate flex items-center gap-1" title="${d.path}">${icon} <span class="flex-1 truncate">${short}${label}</span>${rmBtn}</div>`;
+          const safePath = d.path.replace(/'/g, "\\'");
+          let typeBadge = '';
+          let actionsHtml = '';
+          if (d.type === 'temp') {
+            typeBadge = '<span class="text-[9px] text-apple-blue/60 bg-blue-50 px-1.5 py-0.5 rounded">临时</span>';
+            const isScanning = scanning && scanProgress.directory === d.path;
+            if (isScanning) {
+              const pct = scanProgress.total > 0 ? Math.round(scanProgress.processed / scanProgress.total * 100) : 0;
+              actionsHtml = `<span class="text-[11px] text-apple-blue">扫描中 ${pct}%</span>
+                <span class="text-[10px] text-apple-muted ml-2">（移除需等待扫描完成）</span>`;
+            } else {
+              actionsHtml = `
+                <button onclick="removeWatchDir('${safePath}')" class="text-[11px] text-red-400 hover:bg-red-50 px-2 py-1 rounded transition-colors">移除</button>`;
+              if (scanProgress.status === 'idle' || scanProgress.status === 'completed') {
+                actionsHtml = `
+                  <select data-scan-path="${safePath}" class="text-[10px] border border-apple-border rounded px-1.5 py-1 bg-white text-apple-text mr-1">
+                    <option value="">默认</option>
+                    ${filterOptions}
+                  </select>
+                  <button onclick="scanDir(this)" data-path="${safePath}" class="btn-primary text-[11px] px-2.5 py-1 rounded">扫描</button>` + actionsHtml;
+              }
+            }
+          } else {
+            typeBadge = '<span class="text-[9px] text-apple-muted/60 bg-gray-100 px-1.5 py-0.5 rounded">长期</span>';
+            actionsHtml = `<span class="text-[10px] text-apple-muted">在 config.yaml 中配置</span>`;
+          }
+          return `<div class="py-1.5 border-b border-apple-border last:border-0">
+            <div class="flex items-center gap-1.5 mb-1">
+              <span class="text-[12px] text-apple-text/80 truncate flex-1" title="${d.path}">${short}</span>
+              ${typeBadge}
+            </div>
+            <div class="flex gap-1.5 ml-1">${actionsHtml}</div>
+          </div>`;
         }).join('');
+        if (scanStatus) {
+          if (scanning) {
+            scanStatus.classList.remove('hidden');
+            scanStatus.textContent = `⏳ 扫描中: ${scanProgress.processed}/${scanProgress.total} (失败 ${scanProgress.failed})`;
+            _scanPoll();
+          } else if (scanProgress.status === 'completed') {
+            scanStatus.classList.remove('hidden');
+            scanStatus.textContent = `✅ 扫描完成: 已处理 ${scanProgress.processed} 个文件${scanProgress.failed > 0 ? `，${scanProgress.failed} 个失败` : ''}`;
+            setTimeout(() => { if (scanStatus) scanStatus.classList.add('hidden'); }, 10000);
+          } else {
+            scanStatus.classList.add('hidden');
+          }
+        }
       } else {
         watchSection.classList.add('hidden');
       }
@@ -525,9 +726,9 @@ async function deleteCategory(name) {
   if (result.error === 'cascade_confirm_required') {
     const affected = result.affected_projects || [];
     const msg = affected.length > 0
-      ? `确定删除文件夹「${name}」？\n\n将同时删除 ${affected.length} 个关联主题：${affected.join('、')}`
+      ? `确定删除文件夹「${name}」？将同时删除 ${affected.length} 个关联主题：${affected.join('、')}`
       : `确定删除文件夹「${name}」？`;
-    if (!confirm(msg)) return;
+    if (!(await confirmAsync(msg))) return;
     try {
       const r = await api('POST', '/api/categories/delete', { name, confirm: true });
       if (!r.ok && r.error) toast('⚠️ ' + r.error);
@@ -543,7 +744,7 @@ async function deleteCategory(name) {
 }
 
 async function deleteProject(name) {
-  if (!confirm(`确定删除主题「${name}」？`)) return;
+  if (!(await confirmAsync(`确定删除主题「${name}」？`))) return;
   try {
     const result = await api('POST', '/api/projects/delete', { name });
     if (!result.ok && result.error) toast('⚠️ ' + result.error);

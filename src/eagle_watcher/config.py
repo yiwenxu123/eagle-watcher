@@ -48,7 +48,11 @@ def _default_config() -> dict:
             "extra_watch_dirs": [],
             "watch_interval": 2.0,
         },
-        "delete_after_import": "trash",
+        "delete_after_import": "keep",
+        "import_filters": {
+            "extensions": [],  # 空列表=不过滤；填入如 [".jpg", ".png"] 则仅处理匹配的文件
+            "skip_extensions": [".tmp", ".part", ".download", ".crdownload"],  # 始终跳过临时/下载中文件
+        },
         "notifications": {
             "inbox_reminder": True,
             "import_success": True,
@@ -135,7 +139,7 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
     if not eagle_cfg.get("host"):
         errors.append("缺少 eagle.host 配置")
     if not eagle_cfg.get("token"):
-        warnings.append("缺少 eagle.token 配置，请在 Eagle 偏好设置 → 插件中获取")
+        warnings.append("缺少 eagle.token 配置，请在 Eagle 设置 → 开发者选项中获取")
 
     # 验证 AI 配置
     ai_cfg = cfg.get("ai", {})

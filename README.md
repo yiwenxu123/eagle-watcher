@@ -16,7 +16,7 @@ A macOS menubar app that watches your Downloads folder and automatically sorts d
 ## Requirements
 
 - **macOS 11+** (Big Sur or later)
-- **[Eagle](https://eagle.cool)** app (with API enabled: Preferences → Plugins → "Allow other apps to connect")
+- **[Eagle](https://eagle.cool)** app (with API enabled: Preferences → Developer Options)
 - **Python 3.9+**
 
 ## Quick Start
@@ -29,7 +29,7 @@ pip install eagle-watcher
 pip install 'eagle-watcher[full]'
 
 # 3. Set up Eagle API key
-#    Open Eagle → Preferences → Plugins → copy your API Token
+#    Open Eagle → Preferences → Developer Options → copy your API Token
 cp config.yaml.example ~/.eagle-watcher/config.yaml
 #    Then edit ~/.eagle-watcher/config.yaml and paste your token
 

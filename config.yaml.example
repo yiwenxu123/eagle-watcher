@@ -3,7 +3,7 @@
 
 eagle:
   host: "http://localhost:41595"
-  token: ""  # ← 必填：Eagle → 偏好设置 → 插件 → API Token
+  token: ""  # ← 必填：Eagle → 设置 → 开发者选项 → API Token
 
 paths:
   downloads: "~/Downloads"          # 主监控路径（支持 ~ 展开）
