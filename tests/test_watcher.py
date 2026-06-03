@@ -782,3 +782,79 @@ class TestReconcileWatchers:
                                 temp_dirs=["/tmp/nonexistent-xyz-12345"])
 
         mock_create.assert_not_called()
+
+
+# ── scan_directory / get_scan_progress ──────────────────────
+
+
+class TestScanDirectory:
+
+    def setup_method(self):
+        import eagle_watcher.watcher as watcher
+        with watcher._scan_lock:
+            watcher._scan_progress.clear()
+
+    def test_get_scan_progress_idle_initially(self):
+        """未启动扫描时返回 idle"""
+        from eagle_watcher.watcher import get_scan_progress
+        assert get_scan_progress() == {"status": "idle"}
+
+    def test_scan_nonexistent_dir_fails(self, mock_eagle_api):
+        """不存在的目录 -> status = failed"""
+        from eagle_watcher.watcher import scan_directory, get_scan_progress
+        scan_directory(mock_eagle_api, "/tmp/nonexistent-xyz-scan", recursive=True)
+        import time
+        time.sleep(0.3)
+        progress = get_scan_progress()
+        assert progress["status"] == "failed"
+        assert progress.get("error") == "目录不存在"
+
+    def test_scan_processes_existing_files(self, mock_eagle_api, tmp_path):
+        """scan_directory 处理目录中的已有文件"""
+        from eagle_watcher.watcher import scan_directory, get_scan_progress
+        scan_dir = Path(tmp_path) / "scan_test"
+        scan_dir.mkdir()
+        (scan_dir / "img1.jpg").write_text("data1")
+        (scan_dir / "img2.png").write_text("data2")
+        scan_directory(mock_eagle_api, str(scan_dir), recursive=True)
+        import time
+        time.sleep(0.5)
+        progress = get_scan_progress()
+        assert progress["status"] == "completed"
+        assert progress["total"] == 2
+        assert progress["processed"] == 2
+
+    def test_scan_skips_already_processed(self, mock_eagle_api, tmp_path):
+        """已处理过的文件不计入 processed"""
+        from eagle_watcher.watcher import scan_directory, get_scan_progress
+        from eagle_watcher.services.state_manager import get_state_manager
+        scan_dir = Path(tmp_path) / "scan_skip"
+        scan_dir.mkdir()
+        sm = get_state_manager()
+        f = scan_dir / "skip_me.jpg"
+        f.write_text("data")
+        sm.mark_file_processed(str(f))
+        (scan_dir / "new_file.jpg").write_text("data")
+        scan_directory(mock_eagle_api, str(scan_dir), recursive=True)
+        import time
+        time.sleep(0.5)
+        progress = get_scan_progress()
+        assert progress["status"] == "completed"
+        assert progress["total"] == 2
+        assert progress["skipped"] == 1
+        assert progress["processed"] == 1
+
+    def test_scan_uses_eagle_api(self, mock_eagle_api, tmp_path):
+        """scan_directory 调用 eagle.add_from_path 处理文件"""
+        from eagle_watcher.watcher import scan_directory, get_scan_progress
+        scan_dir = Path(tmp_path) / "scan_api"
+        scan_dir.mkdir()
+        (scan_dir / "test.jpg").write_text("img")
+        scan_directory(mock_eagle_api, str(scan_dir), recursive=True)
+        import time
+        time.sleep(0.5)
+        progress = get_scan_progress()
+        assert progress["status"] == "completed"
+        mock_eagle_api.add_from_path.assert_called()
+        calls = [c for c in mock_eagle_api.add_from_path.call_args_list]
+        assert len(calls) >= 1

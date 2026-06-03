@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import eagle_watcher.watcher as _watcher_mod
+
 from eagle_watcher.server import (
     PanelHandler as Handler,
     _ensure_panel_token,
@@ -128,6 +130,8 @@ class PyUIHelpers:
 def reset_cache():
     _status_cache["data"] = None
     _status_cache["ts"] = 0
+    with _watcher_mod._scan_lock:
+        _watcher_mod._scan_progress.clear()
     yield
 
 
@@ -482,6 +486,49 @@ class TestPOSTRoutes(PyUIHelpers):
         assert code == 200
         data = json.loads(body)
         assert data["removed"] is False
+
+    # ── /api/watch-dirs/scan ──
+
+    def test_get_scan_status_idle(self, eagle_online):
+        """GET /api/watch-dirs/scan-status 初始返回 idle"""
+        code, headers, body = self.do_get(eagle_online, "/api/watch-dirs/scan-status")
+        assert code == 200
+        data = json.loads(body)
+        assert data["status"] == "idle"
+
+    def test_post_scan_missing_path(self, handler):
+        """POST /api/watch-dirs/scan 缺少 path 返回 400"""
+        code, headers, body = self.do_post(handler, "/api/watch-dirs/scan", {})
+        assert code == 400
+        data = json.loads(body)
+        assert "path is required" in data["error"]
+
+    def test_post_scan_nonexistent_dir(self, handler):
+        """POST /api/watch-dirs/scan 不存在的目录返回 400"""
+        code, headers, body = self.do_post(handler, "/api/watch-dirs/scan",
+                                           {"path": "/tmp/nonexistent-xyz-scan"})
+        assert code == 400
+        data = json.loads(body)
+        assert "目录不存在" in data["error"]
+
+    def test_post_scan_not_temp_dir(self, handler, mock_data_dir):
+        """POST /api/watch-dirs/scan 非临时目录返回 400"""
+        code, headers, body = self.do_post(handler, "/api/watch-dirs/scan",
+                                           {"path": str(mock_data_dir)})
+        assert code == 400
+        data = json.loads(body)
+        assert "只支持扫描临时监控目录" in data["error"]
+
+    def test_post_scan_valid(self, handler, mock_data_dir, monkeypatch, mock_eagle_api):
+        """POST /api/watch-dirs/scan 有效临时目录返回 200 并启动扫描"""
+        self.do_post(handler, "/api/watch-dirs/add", {"path": str(mock_data_dir)})
+        monkeypatch.setattr("eagle_watcher.server.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, headers, body = self.do_post(handler, "/api/watch-dirs/scan",
+                                           {"path": str(mock_data_dir)})
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+        assert "扫描已启动" in data["message"]
 
     # ── unknown POST route ──
 
