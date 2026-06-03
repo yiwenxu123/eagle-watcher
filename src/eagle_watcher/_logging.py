@@ -1,3 +1,5 @@
+"""日志配置：每日文件 + 标准错误流，幂等初始化"""
+
 import logging
 import sys
 from datetime import datetime

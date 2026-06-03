@@ -367,10 +367,76 @@ class PanelHandler(BaseHandler):
 
     # ────────── API: 状态 ──────────
 
+    @staticmethod
+    def _check_eagle_online(api: EagleAPI, now: float) -> bool:
+        global _eagle_offline_since
+        if _eagle_offline_since and now - _eagle_offline_since < _EAGLE_OFFLINE_RETRY_INTERVAL:
+            return False
+        online = api.ping()
+        _eagle_offline_since = 0 if online else now
+        return online
+
+    @staticmethod
+    def _fetch_categories_and_counts(api: EagleAPI) -> tuple[dict, int, int]:
+        """从 Eagle API 并发拉取状态数据，返回 (categories, today_count, inbox_count)"""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        local_cats = get_categories()
+
+        try:
+            pool = _get_status_pool()
+            fut_recent = pool.submit(api.list_items, order_by="-btime", limit=100)
+            fut_inbox = pool.submit(api.list_items, tags="待分类")
+            fut_folders = pool.submit(api.list_folders)
+
+            recent_items = fut_recent.result()
+            inbox_items = fut_inbox.result()
+            eagle_folders = fut_folders.result()
+
+            today_count = sum(
+                1 for item in recent_items
+                if item.get("btime", 0) > 0
+                and datetime.fromtimestamp(item["btime"] / 1000).strftime("%Y-%m-%d") == today
+            )
+
+            merged = {}
+            for f in eagle_folders:
+                name = f["name"]
+                merged[name] = {"eagle_folder": name, "folder_id": f["id"], "from_eagle": True}
+                local_cats.pop(name, None)
+            for name, info in local_cats.items():
+                merged[name] = info
+                merged[name]["from_eagle"] = False
+
+            return merged, today_count, len(inbox_items)
+        except Exception as e:
+            _LOG.warning("Eagle API 读取失败: %s", e)
+            return local_cats, 0, 0
+
+    @staticmethod
+    def _check_downloads_permission() -> tuple[bool, str]:
+        try:
+            downloads = load_config().get("paths", {}).get("downloads", "")
+            if not downloads:
+                return False, ""
+            test_file = os.path.join(downloads, ".eagle-watcher-perm-test")
+            try:
+                with open(test_file, "w") as f:
+                    f.write("test")
+            except PermissionError:
+                return True, downloads
+            else:
+                try:
+                    os.remove(test_file)
+                except OSError:
+                    pass
+                return False, ""
+        except (OSError, AttributeError, TypeError):
+            return False, ""
+
     def _handle_api_status(self):
-        global _status_cache, _eagle_offline_since
+        global _status_cache
         now = time.time()
-        # 缓存命中则直接返回（加锁保证原子读取）
         with _status_cache_lock:
             if _status_cache["data"] and now - _status_cache["ts"] < _STATUS_CACHE_TTL:
                 self._send_json(200, _status_cache["data"])
@@ -378,86 +444,14 @@ class PanelHandler(BaseHandler):
 
         sm = get_state_manager()
         api = create_eagle_api(load_config())
-        # 离线降频：如果最近 ping 失败过，跳过本次 ping（仍返回缓存或降级数据）
-        if _eagle_offline_since and now - _eagle_offline_since < _EAGLE_OFFLINE_RETRY_INTERVAL:
-            online = False
-        else:
-            online = api.ping()
-            if not online:
-                _eagle_offline_since = now
-            else:
-                _eagle_offline_since = 0
+        online = self._check_eagle_online(api, now)
 
-        today_count, inbox_count = 0, 0
         local_cats = get_categories()
         projects = get_projects()
-
-        if online:
-            try:
-                from datetime import datetime
-                from concurrent.futures import as_completed
-                today = datetime.now().strftime("%Y-%m-%d")
-
-                pool = _get_status_pool()
-                fut_recent = pool.submit(api.list_items, order_by="-btime", limit=100)
-                fut_inbox = pool.submit(api.list_items, tags="待分类")
-                fut_folders = pool.submit(api.list_folders)
-
-                recent_items = fut_recent.result()
-                inbox_items = fut_inbox.result()
-                eagle_folders = fut_folders.result()
-
-                for item in recent_items:
-                    btime = item.get("btime", 0) / 1000
-                    if btime > 0 and datetime.fromtimestamp(btime).strftime("%Y-%m-%d") == today:
-                        today_count += 1
-
-                inbox_count = len(inbox_items)
-
-                # 从 Eagle 真实文件夹构建分类，覆盖本地数据
-                merged = {}
-                for f in eagle_folders:
-                    name = f["name"]
-                    merged[name] = {
-                        "eagle_folder": name,
-                        "folder_id": f["id"],
-                        "from_eagle": True,
-                    }
-                    # 保留本地元数据（项目关联等）
-                    if name in local_cats:
-                        local_cats.pop(name)
-                # 补充本地有但 Eagle 没有的分类（标记未关联）
-                for name, info in local_cats.items():
-                    merged[name] = info
-                    merged[name]["from_eagle"] = False
-                categories = merged
-            except Exception as e:
-                _LOG.warning("Eagle API 读取失败: %s", e)
-                categories = local_cats
-        else:
-            categories = local_cats
-
-        # 检查监控目录权限
-        permission_denied = False
-        permission_path = ""
-        try:
-            downloads = load_config().get("paths", {}).get("downloads", "")
-            if downloads:
-                test_file = os.path.join(downloads, ".eagle-watcher-perm-test")
-                try:
-                    with open(test_file, "w") as f:
-                        f.write("test")
-                except PermissionError:
-                    permission_denied = True
-                    permission_path = downloads
-                else:
-                    # 文件写入成功，确保清理
-                    try:
-                        os.remove(test_file)
-                    except OSError:
-                        pass
-        except (OSError, AttributeError, TypeError):
-            pass
+        categories, today_count, inbox_count = (
+            self._fetch_categories_and_counts(api) if online else (local_cats, 0, 0)
+        )
+        permission_denied, permission_path = self._check_downloads_permission()
 
         result = {
             "current_project": get_current_project(),

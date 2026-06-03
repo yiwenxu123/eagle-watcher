@@ -1,3 +1,5 @@
+"""通用箱整理服务：知识库匹配 → 标签更新 → 学习"""
+
 import logging
 from pathlib import Path
 from typing import Optional

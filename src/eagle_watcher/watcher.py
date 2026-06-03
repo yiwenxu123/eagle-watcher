@@ -25,6 +25,7 @@ from eagle_watcher.notifier import notify
 
 _LOG = logging.getLogger("watcher")
 _processing_files: set[str] = set()
+_processing_files_lock = threading.Lock()
 _retry_queue: deque[tuple[str, int]] = deque(maxlen=100)  # (file_path, attempt)
 _MAX_RETRIES = 3
 _MAX_AI_FILE_SIZE = 20 * 1024 * 1024  # 20MB - Qwen-VL API limit
@@ -298,6 +299,66 @@ def _check_result(result: dict, filename: str, theme: str, tags: list[str],
                         "filename": filename, "error": str(result)})
 
 
+def _handle_ai_analysis(eagle: EagleAPI, file_path: str, filename: str,
+                         folder_id: Optional[str], tags: list[str],
+                         decision: dict) -> None:
+    """处理 AI 视觉分析分支：预检查 → 调 Qwen-VL → 导入 → 学习知识库"""
+    ai_result = None
+    ext = Path(file_path).suffix.lower()
+    file_size = os.path.getsize(file_path)
+
+    if ext not in _AI_ALLOWED_EXTS:
+        print(f"  ⏭️ 不支持的文件格式 ({ext})，跳过AI分析: {filename}")
+    elif file_size == 0:
+        print(f"  ⏭️ 空文件，跳过AI分析: {filename}")
+    elif file_size > _MAX_AI_FILE_SIZE:
+        print(f"  ⏭️ 文件过大 ({file_size/1024/1024:.1f}MB)，跳过AI分析: {filename}")
+    else:
+        print(f"  🤖 文件名模糊，Qwen-VL 分析中：{filename}")
+        ai_result = analyze_image(file_path)
+
+    if ai_result:
+        ai_tags = ai_result["tags"]
+        suggested_name = ai_result["name"]
+        print(f"  🏷  AI 识别结果：{' ｜ '.join(ai_tags)}")
+        result = eagle.add_from_path(
+            file_path,
+            name=suggested_name,
+            tags=tags + ai_tags,
+            folder_id=folder_id,
+        )
+        _check_result(result, filename, decision.get("theme", ""), ai_tags, file_path)
+        if result.get("status") != "success":
+            raise Exception(f"Eagle import failed: {result}")
+        _learn_ai_knowledge(filename, ai_tags)
+    else:
+        print(f"  ⏭️ AI 分析跳过或失败，暂存到通用箱")
+        result = eagle.add_from_path(
+            file_path,
+            tags=tags or ["待分类"],
+            folder_id=folder_id,
+        )
+        _check_result(result, filename, "", tags or ["待分类"], file_path)
+        if result.get("status") != "success":
+            raise Exception(f"Eagle import failed: {result}")
+
+
+def _learn_ai_knowledge(filename: str, ai_tags: list[str]) -> None:
+    current_project = get_state_manager().get_current_project()
+    if not current_project or not ai_tags:
+        return
+    try:
+        from eagle_watcher.knowledge import record_match
+        keyword = next((t for t in ai_tags if t.lower() not in _GENERIC_AI_TAGS), None)
+        if keyword:
+            record_match(filename, keyword, current_project, ai_tags)
+            _LOG.info("知识库已学习: %s → %s (来自 AI)", keyword, current_project)
+        else:
+            _LOG.debug("AI 标签均为通用词，跳过知识库学习: %s", ai_tags)
+    except Exception as e:
+        _LOG.warning("AI 知识库学习失败: %s", e)
+
+
 def _process_file(eagle: EagleAPI, file_path: str):
     filename = Path(file_path).name
 
@@ -328,58 +389,7 @@ def _process_file(eagle: EagleAPI, file_path: str):
     tags = list(decision.get("tags", []))
 
     if decision["action"] == "ai_analyze":
-        ai_result = None
-        # P2-12: Pre-checks before calling Qwen-VL API
-        ext = Path(file_path).suffix.lower()
-        if ext not in _AI_ALLOWED_EXTS:
-            print(f"  ⏭️ 不支持的文件格式 ({ext})，跳过AI分析: {filename}")
-            decision["action"] = "inbox"
-        elif file_size == 0:
-            print(f"  ⏭️ 空文件，跳过AI分析: {filename}")
-            decision["action"] = "inbox"
-        elif file_size > _MAX_AI_FILE_SIZE:
-            print(f"  ⏭️ 文件过大 ({file_size/1024/1024:.1f}MB)，跳过AI分析: {filename}")
-            decision["action"] = "inbox"
-        else:
-            print(f"  🤖 文件名模糊，Qwen-VL 分析中：{filename}")
-            ai_result = analyze_image(file_path)
-        if ai_result:
-            ai_tags = ai_result["tags"]
-            suggested_name = ai_result["name"]
-            print(f"  🏷  AI 识别结果：{' ｜ '.join(ai_tags)}")
-            result = eagle.add_from_path(
-                file_path,
-                name=suggested_name,
-                tags=tags + ai_tags,
-                folder_id=folder_id,
-            )
-            _check_result(result, filename, decision.get("theme", ""), ai_tags, file_path)
-            if result.get("status") != "success":
-                raise Exception(f"Eagle import failed: {result}")
-            # AI 分析成功：学习 AI 标签到当前项目的知识映射
-            current_project = get_state_manager().get_current_project()
-            if current_project and ai_tags:
-                try:
-                    from eagle_watcher.knowledge import record_match
-                    # 取第一个非通用英文词的 AI 标签作为关键词，避免 "portrait→主题" 等污染
-                    keyword = next((t for t in ai_tags if t.lower() not in _GENERIC_AI_TAGS), None)
-                    if keyword:
-                        record_match(filename, keyword, current_project, ai_tags)
-                        _LOG.info("知识库已学习: %s → %s (来自 AI)", keyword, current_project)
-                    else:
-                        _LOG.debug("AI 标签均为通用词，跳过知识库学习: %s", ai_tags)
-                except Exception as e:
-                    _LOG.warning("AI 知识库学习失败: %s", e)
-        else:
-            print(f"  ⏭️ AI 分析跳过或失败，暂存到通用箱")
-            result = eagle.add_from_path(
-                file_path,
-                tags=tags or ["待分类"],
-                folder_id=folder_id,
-            )
-            _check_result(result, filename, "", tags or ["待分类"], file_path)
-            if result.get("status") != "success":
-                raise Exception(f"Eagle import failed: {result}")
+        _handle_ai_analysis(eagle, file_path, filename, folder_id, tags, decision)
         return
 
     if not tags:
@@ -398,14 +408,19 @@ def _process_file(eagle: EagleAPI, file_path: str):
 
 def _on_file_detected(eagle: EagleAPI, file_path: str, attempt: int = 0):
     global _processing_files
-    if file_path in _processing_files:
-        return
+    with _processing_files_lock:
+        if file_path in _processing_files:
+            return
+        _processing_files.add(file_path)
     if attempt == 0 and _is_processed(file_path):
+        with _processing_files_lock:
+            _processing_files.discard(file_path)
         return
     if not _should_process_file(file_path):
         _LOG.debug("跳过不符合筛选条件的文件: %s", file_path)
+        with _processing_files_lock:
+            _processing_files.discard(file_path)
         return
-    _processing_files.add(file_path)
 
     filename = Path(file_path).name
     if attempt > 0:
@@ -426,7 +441,8 @@ def _on_file_detected(eagle: EagleAPI, file_path: str, attempt: int = 0):
         else:
             print(f"  ❌ 处理最终失败：{filename} — {e}")
     finally:
-        _processing_files.discard(file_path)
+        with _processing_files_lock:
+            _processing_files.discard(file_path)
 
 
 def _resolve_watch_dirs(cfg: dict, extra_dirs: Optional[list[str]] = None,
@@ -563,9 +579,10 @@ def run_watcher(eagle: Optional[EagleAPI] = None,
             # 每分钟清理一次 _processing_files 中已不存在的文件
             if now - _last_cleanup_time >= 60:
                 _last_cleanup_time = now
-                stale = [fp for fp in list(_processing_files) if not os.path.exists(fp)]
-                for fp in stale:
-                    _processing_files.discard(fp)
+                with _processing_files_lock:
+                    stale = [fp for fp in list(_processing_files) if not os.path.exists(fp)]
+                    for fp in stale:
+                        _processing_files.discard(fp)
                 if stale:
                     _LOG.info("清理了 %d 个不存在的文件记录", len(stale))
     except KeyboardInterrupt:

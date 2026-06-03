@@ -1,3 +1,5 @@
+"""线程安全的运行时状态管理：JSON 文件持久化 + 写穿透"""
+
 import json
 import logging
 import os
