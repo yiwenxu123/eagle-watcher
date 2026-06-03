@@ -7,6 +7,7 @@ import threading
 import yaml
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from eagle_watcher.services.state_manager import get_state_manager
 
@@ -136,8 +137,17 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
 
     # 验证 Eagle 配置
     eagle_cfg = cfg.get("eagle", {})
-    if not eagle_cfg.get("host"):
+    host = eagle_cfg.get("host", "")
+    if not host:
         errors.append("缺少 eagle.host 配置")
+    else:
+        parsed = urlparse(host)
+        if not parsed.scheme:
+            errors.append(f"eagle.host 缺少协议前缀（应为 http:// 或 https://）：{host}")
+        elif parsed.scheme not in ("http", "https"):
+            errors.append(f"eagle.host 协议不支持：{parsed.scheme}")
+        elif not parsed.hostname:
+            errors.append(f"eagle.host 格式无效：{host}")
     if not eagle_cfg.get("token"):
         warnings.append("缺少 eagle.token 配置，请在 Eagle 设置 → 开发者选项中获取")
 

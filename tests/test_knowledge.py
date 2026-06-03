@@ -549,3 +549,24 @@ class TestThreadSafety:
             MAX_CONFIDENCE,
         )
         assert entry["confidence"] == pytest.approx(expected_conf)
+
+
+# ════════════════════════════════════════════════════════════
+#  异常处理
+# ════════════════════════════════════════════════════════════
+
+
+class TestLoadCorruptYaml:
+    """_load() 应优雅处理损坏的 YAML 文件"""
+
+    def test_corrupt_yaml_returns_empty(self, mock_data_dir):
+        """损坏的 YAML → 返回空知识库，不抛异常"""
+        KNOWLEDGE_PATH.write_text("{ broken: yaml: [\n")
+        data = _load()
+        assert data == {"keywords_mapping": {}, "sources": {}}
+
+    def test_binary_garbage_returns_empty(self, mock_data_dir):
+        """二进制垃圾数据 → 返回空知识库"""
+        KNOWLEDGE_PATH.write_bytes(b"\x00\x01\x02\x03\xff\xfe")
+        data = _load()
+        assert data == {"keywords_mapping": {}, "sources": {}}

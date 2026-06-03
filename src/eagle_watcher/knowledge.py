@@ -25,8 +25,13 @@ def _load() -> dict:
     with _knowledge_lock:
         if not KNOWLEDGE_PATH.exists():
             return {"keywords_mapping": {}, "sources": {}}
-        with open(KNOWLEDGE_PATH) as f:
-            return yaml.safe_load(f) or {"keywords_mapping": {}, "sources": {}}
+        try:
+            with open(KNOWLEDGE_PATH) as f:
+                data = yaml.safe_load(f)
+        except (yaml.YAMLError, OSError) as e:
+            _LOG.warning("知识库文件损坏，已重置：%s", e)
+            return {"keywords_mapping": {}, "sources": {}}
+        return data or {"keywords_mapping": {}, "sources": {}}
 
 
 def _save(data: dict):

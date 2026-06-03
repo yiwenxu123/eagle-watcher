@@ -203,6 +203,39 @@ class TestValidateConfig:
         errors, warnings = validate_config(cfg)
         assert any("extra_watch_dirs 应为列表" in w for w in warnings)
 
+    def test_host_missing_scheme(self, mock_data_dir):
+        """host 缺少协议前缀（如 localhost:41595）→ 错误"""
+        from eagle_watcher.config import validate_config
+        cfg = {"eagle": {"host": "localhost:41595", "token": "x"},
+               "paths": {"downloads": str(Path.home() / "Downloads")}}
+        errors, warnings = validate_config(cfg)
+        # urlparse 将 localhost:41595 解析为 scheme=localhost，属于协议不支持
+        assert any("协议" in e for e in errors)
+
+    def test_host_invalid_scheme(self, mock_data_dir):
+        """host 使用不支持的协议 → 错误"""
+        from eagle_watcher.config import validate_config
+        cfg = {"eagle": {"host": "ftp://localhost:41595", "token": "x"},
+               "paths": {"downloads": str(Path.home() / "Downloads")}}
+        errors, warnings = validate_config(cfg)
+        assert any("协议不支持" in e for e in errors)
+
+    def test_host_valid_http(self, mock_data_dir):
+        """host 为 http:// → 无 URL 相关错误"""
+        from eagle_watcher.config import validate_config
+        cfg = {"eagle": {"host": "http://localhost:41595", "token": "x"},
+               "paths": {"downloads": str(Path.home() / "Downloads")}}
+        errors, warnings = validate_config(cfg)
+        assert not any("协议" in e or "格式无效" in e for e in errors)
+
+    def test_host_valid_https(self, mock_data_dir):
+        """host 为 https:// → 无 URL 相关错误"""
+        from eagle_watcher.config import validate_config
+        cfg = {"eagle": {"host": "https://eagle.example.com", "token": "x"},
+               "paths": {"downloads": str(Path.home() / "Downloads")}}
+        errors, warnings = validate_config(cfg)
+        assert not any("协议" in e or "格式无效" in e for e in errors)
+
 
 # ---------------------------------------------------------------------------
 # _default_config

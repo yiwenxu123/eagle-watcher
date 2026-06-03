@@ -1,3 +1,5 @@
+"""文件系统监控：FSEvents → inode 轮询分层回退"""
+
 import logging
 import os
 import threading
@@ -254,7 +256,7 @@ class PollingWatcher:
                     )
                 except OSError:
                     continue
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             pass
 
     def _poll_once(self):
@@ -289,7 +291,7 @@ class PollingWatcher:
                             ready.append(rec.path)
                 except OSError:
                     continue
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             pass
 
         self._known_inodes = new_inodes
