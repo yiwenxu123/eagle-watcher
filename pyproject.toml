@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eagle-watcher"
-version = "0.3.0"
+version = "0.4.0"
 description = "macOS 素材管家 — 自动监控 Downloads 文件夹，智能分类入库到 Eagle"
 readme = "README.md"
 requires-python = ">=3.9"
