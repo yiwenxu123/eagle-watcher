@@ -31,14 +31,15 @@ from urllib.parse import urlparse, parse_qs
 from eagle_watcher.pyui.panel import set_pinned as panel_set_pinned
 from eagle_watcher.ai_tagger import _get_api_key, _get_model, clear_cache as ai_clear_cache, get_cache_size as ai_cache_size
 from eagle_watcher.config import (
-    load_config, ensure_data_dir,
+    load_config, save_config, ensure_data_dir,
     get_categories, get_category_names, get_category_info,
     get_projects, get_project_info, get_current_project, set_current_project,
     create_project, delete_project, create_category, delete_category,
 )
 from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 from eagle_watcher.services.state_manager import get_state_manager
-from eagle_watcher.knowledge import match_by_filename, record_match
+from eagle_watcher.knowledge import match_by_filename, record_match, list_keywords, update_keyword, delete_keyword, get_knowledge_stats
+from eagle_watcher.exporter import export_file, get_export_status, clear_export_dir, export_by_theme
 from eagle_watcher.analyzer import decide
 from eagle_watcher.watcher import scan_directory, get_scan_progress
 
@@ -720,6 +721,159 @@ class PanelHandler(BaseHandler):
         else:
             self._send_json(500, {"error": str(result)})
 
+    # ────────── API: 配置 ──────────
+
+    def _handle_config_token(self, body: dict):
+        token = body.get("token", "").strip()
+        if not token:
+            self._send_json(400, {"error": "token is required"})
+            return
+        cfg = load_config()
+        cfg.setdefault("eagle", {})["token"] = token
+        save_config(cfg)
+        # 验证 Eagle 连接
+        api = create_eagle_api(cfg)
+        online = api.ping()
+        self._send_json(200, {"ok": True, "eagle_online": online})
+
+    # ────────── API: 知识库管理 ──────────
+
+    def _handle_knowledge_list(self):
+        from urllib.parse import parse_qs
+        params = parse_qs(urlparse(self.path).query)
+        search = params.get("search", [""])[0]
+        theme = params.get("theme", [""])[0]
+        sort = params.get("sort", ["confidence"])[0]
+        page = int(params.get("page", ["1"])[0])
+        per_page = int(params.get("per_page", ["20"])[0])
+        result = list_keywords(search=search, theme=theme, sort=sort, page=page, per_page=per_page)
+        # 附加统计信息
+        stats = get_knowledge_stats()
+        result["stats"] = stats
+        self._send_json(200, result)
+
+    def _handle_knowledge_update(self, body: dict):
+        keyword = body.get("keyword", "").strip()
+        if not keyword:
+            self._send_json(400, {"error": "keyword is required"})
+            return
+        theme = body.get("theme")
+        tags = body.get("tags")
+        ok = update_keyword(keyword, theme=theme, tags=tags)
+        if ok:
+            self._send_json(200, {"ok": True})
+        else:
+            self._send_json(404, {"error": f"关键词不存在: {keyword}"})
+
+    def _handle_knowledge_delete(self, body: dict):
+        keyword = body.get("keyword", "").strip()
+        if not keyword:
+            self._send_json(400, {"error": "keyword is required"})
+            return
+        ok = delete_keyword(keyword)
+        if ok:
+            self._send_json(200, {"ok": True})
+        else:
+            self._send_json(404, {"error": f"关键词不存在: {keyword}"})
+
+    # ────────── API: 导出工作区 ──────────
+
+    def _handle_export_status(self):
+        cfg = load_config()
+        status = get_export_status(cfg)
+        self._send_json(200, status)
+
+    def _handle_export_config(self, body: dict):
+        cfg = load_config()
+        export_cfg = cfg.setdefault("export", {})
+        if "enabled" in body:
+            export_cfg["enabled"] = bool(body["enabled"])
+        if "dir" in body:
+            dir_str = str(body["dir"]).strip()
+            if dir_str:
+                expanded = os.path.expanduser(dir_str)
+                if not os.path.isabs(expanded):
+                    self._send_json(400, {"error": "请输入绝对路径"})
+                    return
+                # 防止路径遍历攻击，解析真实路径
+                real_path = os.path.realpath(expanded)
+                # 禁止设置系统关键目录（根目录及一级系统目录）
+                blocked = ("/usr", "/System", "/bin", "/sbin", "/dev", "/etc")
+                if real_path.rstrip("/") == "/" or any(
+                    real_path.startswith(p + "/") or real_path == p for p in blocked
+                ):
+                    self._send_json(400, {"error": "不允许设置系统目录"})
+                    return
+                # 检查可写性：尝试创建目录
+                try:
+                    from pathlib import Path
+                    Path(real_path).mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    self._send_json(400, {"error": f"目录不可写: {e}"})
+                    return
+            export_cfg["dir"] = dir_str
+        if "auto" in body:
+            export_cfg["auto"] = bool(body["auto"])
+        if "structure" in body:
+            val = body["structure"]
+            if val in ("theme", "date", "flat"):
+                export_cfg["structure"] = val
+        if "themes" in body:
+            val = body["themes"]
+            if isinstance(val, list):
+                export_cfg["themes"] = [str(t) for t in val]
+        save_config(cfg)
+        self._send_json(200, {"ok": True})
+
+    def _handle_export_item(self, body: dict):
+        file_path = body.get("file_path", "").strip()
+        theme = body.get("theme", "")
+        filename = body.get("filename", "").strip()
+        if not file_path or not filename:
+            self._send_json(400, {"error": "file_path and filename are required"})
+            return
+        if not os.path.exists(file_path):
+            self._send_json(400, {"error": "文件不存在"})
+            return
+        cfg = load_config()
+        result = export_file(file_path, theme, filename, cfg)
+        if result:
+            self._send_json(200, {"ok": True, "exported_to": result})
+        else:
+            self._send_json(200, {"ok": False, "reason": "导出未启用或已跳过"})
+
+    def _handle_export_clear(self, body: dict):
+        if not body.get("confirm"):
+            cfg = load_config()
+            status = get_export_status(cfg)
+            self._send_json(400, {
+                "error": "confirm_required",
+                "message": f"确认要清空导出工作区？将删除 {status['file_count']} 个文件",
+                "file_count": status["file_count"],
+            })
+            return
+        cfg = load_config()
+        result = clear_export_dir(cfg)
+        self._send_json(200, {"ok": True, **result})
+
+    def _handle_export_theme(self, body: dict):
+        theme = body.get("theme", "").strip()
+        if not theme:
+            self._send_json(400, {"error": "缺少 theme 参数"})
+            return
+        cfg = load_config()
+        api = create_eagle_api(cfg)
+        if not api.ping():
+            self._send_json(503, {"error": "Eagle 未运行"})
+            return
+        _LOG.info("批量导出请求: theme=%s", theme)
+        result = export_by_theme(theme, api, cfg)
+        _LOG.info("批量导出结果: %s", result)
+        if result.get("error"):
+            self._send_json(400, {"error": result["error"]})
+        else:
+            self._send_json(200, {"ok": True, **result})
+
     # ────────── API: 置顶 ──────────
 
     def _handle_set_pinned(self, body: dict):
@@ -742,6 +896,14 @@ class PanelHandler(BaseHandler):
         elif action == "open-privacy-settings":
             subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
             self._send_json(200, {"ok": True})
+        elif action == "open-path":
+            path = body.get("path", "").strip()
+            expanded = os.path.expanduser(path)
+            if os.path.isdir(expanded):
+                subprocess.Popen(["open", expanded])
+                self._send_json(200, {"ok": True})
+            else:
+                self._send_json(400, {"error": "目录不存在"})
         else:
             self._send_json(400, {"error": f"unknown action: {action}"})
 
@@ -954,6 +1116,10 @@ class PanelHandler(BaseHandler):
             elif path == "/api/watch-dirs/filter-presets":
                 from eagle_watcher.watcher import get_filter_presets
                 self._send_json(200, {"presets": get_filter_presets()})
+            elif path == "/api/knowledge":
+                self._handle_knowledge_list()
+            elif path == "/api/export/status":
+                self._handle_export_status()
             else:
                 self._send_json(404, {"error": "not found"})
 
@@ -1002,6 +1168,20 @@ class PanelHandler(BaseHandler):
                 from eagle_watcher.services.history import clear as clear_history
                 clear_history()
                 self._send_json(200, {"ok": True})
+            elif path == "/api/config/token":
+                self._handle_config_token(body)
+            elif path == "/api/knowledge/update":
+                self._handle_knowledge_update(body)
+            elif path == "/api/knowledge/delete":
+                self._handle_knowledge_delete(body)
+            elif path == "/api/export/config":
+                self._handle_export_config(body)
+            elif path == "/api/export/item":
+                self._handle_export_item(body)
+            elif path == "/api/export/clear":
+                self._handle_export_clear(body)
+            elif path == "/api/export/theme":
+                self._handle_export_theme(body)
             else:
                 self._send_json(404, {"error": "not found"})
 

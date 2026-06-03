@@ -156,6 +156,34 @@ class EagleAPI:
         items = data.get("data", [])
         return items[0] if items else None
 
+    def get_item_file_path(self, item_id: str, name: str, ext: str) -> Optional[str]:
+        """获取素材的本地文件绝对路径。
+
+        通过 thumbnail 端点推导文件目录，再拼接原文件名。
+        """
+        try:
+            data = self._get(f"item/thumbnail?id={item_id}")
+            thumb_path = data.get("data", "")
+            if not thumb_path:
+                _LOG.debug("get_item_file_path: thumbnail 返回空 data, item_id=%s", item_id)
+                return None
+            # thumbnail 路径形如 .../ITEM_ID.info/NAME_thumbnail.png
+            # 原文件在同一目录：NAME.EXT
+            from urllib.parse import unquote
+            thumb_path = unquote(thumb_path)
+            parent = os.path.dirname(thumb_path)
+            file_path = os.path.join(parent, f"{name}.{ext}")
+            if not os.path.isfile(file_path):
+                _LOG.debug("get_item_file_path: 文件不存在 %s (thumbnail=%s)", file_path, thumb_path)
+                return None
+            return file_path
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+            _LOG.warning("get_item_file_path 网络/IO 异常 item_id=%s: %s", item_id, e)
+            return None
+        except (KeyError, TypeError, ValueError) as e:
+            _LOG.debug("get_item_file_path 数据解析异常 item_id=%s: %s", item_id, e)
+            return None
+
     # ────────────── 文件夹操作 ──────────────
 
     def list_folders(self) -> list[dict]:

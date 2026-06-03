@@ -269,8 +269,15 @@ def _check_result(result: dict, filename: str, theme: str, tags: list[str],
             "status": "success",
         })
 
-        # 根据配置策略处理原始文件
+        # 加载配置（后续导出和删除策略都需要）
         cfg = load_config()
+
+        # 自动导出到工作区（必须在 trash 之前执行）
+        if file_path and os.path.exists(file_path) and cfg.get("export", {}).get("auto", True):
+            from eagle_watcher.exporter import export_file
+            export_file(file_path, theme_label, filename, cfg)
+
+        # 根据配置策略处理原始文件
         delete_policy = cfg.get("delete_after_import", "trash")
         if delete_policy != "keep" and file_path and os.path.exists(file_path):
             if _trash_file(file_path):

@@ -4,6 +4,7 @@ import io
 import json
 import secrets
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -800,3 +801,288 @@ class TestGetWatchDirsFromConfig:
         types = [d["type"] for d in dirs]
         assert "downloads" in types
         assert "extra" in types
+
+
+# ── /api/knowledge ─────────────────────────────────────────────────
+
+
+class TestKnowledgeAPI(PyUIHelpers):
+    """Knowledge base CRUD via HTTP API"""
+
+    def _seed(self):
+        from eagle_watcher.knowledge import record_match, _save
+        _save({"keywords_mapping": {}, "sources": {}})
+        record_match("白起.jpg", "白起", "武安侯", ["战国"])
+        record_match("兵马俑.jpg", "兵马俑", "秦始皇", ["秦朝"])
+
+    def test_get_knowledge_list(self, handler, mock_data_dir):
+        """GET /api/knowledge returns keyword list with stats"""
+        self._seed()
+        code, headers, body = self.do_get(handler, "/api/knowledge")
+        assert code == 200
+        data = json.loads(body)
+        assert data["total"] == 2
+        assert len(data["items"]) == 2
+        assert "stats" in data
+        assert data["stats"]["total_keywords"] == 2
+
+    def test_get_knowledge_search(self, handler, mock_data_dir):
+        """GET /api/knowledge?search=白起 filters by keyword"""
+        self._seed()
+        code, _, body = self.do_get(handler, "/api/knowledge?search=白起")
+        assert code == 200
+        data = json.loads(body)
+        assert data["total"] == 1
+        assert data["items"][0]["keyword"] == "白起"
+
+    def test_get_knowledge_theme_filter(self, handler, mock_data_dir):
+        """GET /api/knowledge?theme=秦始皇 filters by theme"""
+        self._seed()
+        code, _, body = self.do_get(handler, "/api/knowledge?theme=秦始皇")
+        assert code == 200
+        data = json.loads(body)
+        assert data["total"] == 1
+        assert data["items"][0]["theme"] == "秦始皇"
+
+    def test_get_knowledge_pagination(self, handler, mock_data_dir):
+        """GET /api/knowledge with page/per_page params"""
+        self._seed()
+        code, _, body = self.do_get(handler, "/api/knowledge?page=1&per_page=1")
+        assert code == 200
+        data = json.loads(body)
+        assert len(data["items"]) == 1
+        assert data["total"] == 2
+
+    def test_post_knowledge_update(self, handler, mock_data_dir):
+        """POST /api/knowledge/update modifies keyword theme and tags"""
+        self._seed()
+        code, _, body = self.do_post(handler, "/api/knowledge/update", {
+            "keyword": "白起",
+            "theme": "新主题",
+            "tags": ["新标签"],
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+
+    def test_post_knowledge_update_missing_keyword(self, handler, mock_data_dir):
+        """POST /api/knowledge/update without keyword returns 400"""
+        code, _, body = self.do_post(handler, "/api/knowledge/update", {})
+        assert code == 400
+
+    def test_post_knowledge_update_nonexistent(self, handler, mock_data_dir):
+        """POST /api/knowledge/update for non-existent keyword returns 404"""
+        self._seed()
+        code, _, body = self.do_post(handler, "/api/knowledge/update", {
+            "keyword": "不存在",
+            "theme": "T",
+        })
+        assert code == 404
+
+    def test_post_knowledge_delete(self, handler, mock_data_dir):
+        """POST /api/knowledge/delete removes keyword"""
+        self._seed()
+        code, _, body = self.do_post(handler, "/api/knowledge/delete", {
+            "keyword": "白起",
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+
+    def test_post_knowledge_delete_missing_keyword(self, handler, mock_data_dir):
+        """POST /api/knowledge/delete without keyword returns 400"""
+        code, _, body = self.do_post(handler, "/api/knowledge/delete", {})
+        assert code == 400
+
+    def test_post_knowledge_delete_nonexistent(self, handler, mock_data_dir):
+        """POST /api/knowledge/delete for non-existent keyword returns 404"""
+        self._seed()
+        code, _, body = self.do_post(handler, "/api/knowledge/delete", {
+            "keyword": "不存在",
+        })
+        assert code == 404
+
+
+# ── /api/config/token ──────────────────────────────────────────────
+
+
+class TestConfigTokenAPI(PyUIHelpers):
+    """Token save and Eagle connectivity check"""
+
+    def test_post_config_token_saves(self, eagle_online, mock_data_dir):
+        """POST /api/config/token saves token and returns eagle_online status"""
+        code, _, body = self.do_post(eagle_online, "/api/config/token", {
+            "token": "test-token-123",
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+        assert "eagle_online" in data
+
+    def test_post_config_token_empty(self, eagle_online):
+        """POST /api/config/token with empty token returns 400"""
+        code, _, body = self.do_post(eagle_online, "/api/config/token", {
+            "token": "",
+        })
+        assert code == 400
+
+    def test_post_config_token_missing(self, eagle_online):
+        """POST /api/config/token without token field returns 400"""
+        code, _, body = self.do_post(eagle_online, "/api/config/token", {})
+        assert code == 400
+
+
+# ── /api/export ─────────────────────────────────────────────────────
+
+
+class TestExportAPI(PyUIHelpers):
+    """Export workspace API endpoints"""
+
+    def _setup_export_dir(self, tmp_path):
+        export_dir = tmp_path / "export"
+        export_dir.mkdir(exist_ok=True)
+        return str(export_dir)
+
+    def test_get_export_status(self, handler, mock_data_dir):
+        """GET /api/export/status returns export config and stats"""
+        code, _, body = self.do_get(handler, "/api/export/status")
+        assert code == 200
+        data = json.loads(body)
+        assert "enabled" in data
+        assert "dir" in data
+        assert "file_count" in data
+
+    def test_post_export_config_save(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/config saves export settings"""
+        export_dir = self._setup_export_dir(tmp_path)
+        code, _, body = self.do_post(handler, "/api/export/config", {
+            "enabled": True,
+            "dir": export_dir,
+            "auto": True,
+            "structure": "theme",
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+
+    def test_post_export_config_updates_status(self, handler, mock_data_dir, tmp_path):
+        """Saving config then checking status reflects the change"""
+        export_dir = self._setup_export_dir(tmp_path)
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": export_dir,
+        })
+        code, _, body = self.do_get(handler, "/api/export/status")
+        data = json.loads(body)
+        assert data["enabled"] is True
+        assert data["dir"] == export_dir
+
+    def test_post_export_item(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/item exports a single file"""
+        export_dir = self._setup_export_dir(tmp_path)
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": export_dir,
+        })
+        # 创建源文件
+        src = tmp_path / "source.jpg"
+        src.write_bytes(b"test content")
+        code, _, body = self.do_post(handler, "/api/export/item", {
+            "file_path": str(src),
+            "theme": "武安侯",
+            "filename": "source.jpg",
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+        assert "exported_to" in data
+
+    def test_post_export_item_missing_fields(self, handler, mock_data_dir):
+        """POST /api/export/item without required fields returns 400"""
+        code, _, body = self.do_post(handler, "/api/export/item", {})
+        assert code == 400
+
+    def test_post_export_item_nonexistent_file(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/item with non-existent file returns 400"""
+        export_dir = self._setup_export_dir(tmp_path)
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": export_dir,
+        })
+        code, _, body = self.do_post(handler, "/api/export/item", {
+            "file_path": "/tmp/nonexistent-xyz.jpg",
+            "theme": "T",
+            "filename": "x.jpg",
+        })
+        assert code == 400
+
+    def test_post_export_clear_requires_confirm(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/clear without confirm returns 400"""
+        export_dir = self._setup_export_dir(tmp_path)
+        (Path(export_dir) / "test.txt").write_text("data")
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": export_dir,
+        })
+        code, _, body = self.do_post(handler, "/api/export/clear", {})
+        assert code == 400
+        data = json.loads(body)
+        assert data["error"] == "confirm_required"
+        assert data["file_count"] == 1
+
+    def test_post_export_clear_with_confirm(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/clear with confirm=true clears the export directory"""
+        export_dir = self._setup_export_dir(tmp_path)
+        (Path(export_dir) / "test.txt").write_text("data")
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": export_dir,
+        })
+        code, _, body = self.do_post(handler, "/api/export/clear", {"confirm": True})
+        assert code == 200
+        data = json.loads(body)
+        assert data["ok"] is True
+        assert data["cleared"] == 1
+
+    def test_post_export_config_with_themes(self, handler, mock_data_dir, tmp_path):
+        """POST /api/export/config saves themes filter list"""
+        export_dir = self._setup_export_dir(tmp_path)
+        code, _, body = self.do_post(handler, "/api/export/config", {
+            "enabled": True,
+            "dir": export_dir,
+            "themes": ["武安侯", "秦始皇"],
+        })
+        assert code == 200
+        # 验证 status 返回中包含 themes_filter
+        _, _, status_body = self.do_get(handler, "/api/export/status")
+        status = json.loads(status_body)
+        assert status["themes_filter"] == ["武安侯", "秦始皇"]
+
+    def test_post_export_theme_missing_param(self, handler, mock_data_dir):
+        """POST /api/export/theme without theme returns 400"""
+        code, _, body = self.do_post(handler, "/api/export/theme", {})
+        assert code == 400
+
+    @patch("eagle_watcher.server.create_eagle_api")
+    @patch("eagle_watcher.server.export_by_theme")
+    def test_post_export_theme_success(self, mock_export, mock_api_factory, handler, mock_data_dir, tmp_path):
+        """POST /api/export/theme with valid theme returns result"""
+        export_dir = tmp_path / "export"
+        export_dir.mkdir(exist_ok=True)
+        self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": str(export_dir),
+        })
+        mock_api = MagicMock()
+        mock_api.ping.return_value = True
+        mock_api_factory.return_value = mock_api
+        mock_export.return_value = {"exported": 5, "skipped": 2, "error": None}
+        code, _, body = self.do_post(handler, "/api/export/theme", {"theme": "武安侯"})
+        assert code == 200
+        data = json.loads(body)
+        assert data["exported"] == 5
+        assert data["skipped"] == 2
+
+    def test_post_export_config_rejects_system_dir(self, handler, mock_data_dir):
+        """POST /api/export/config rejects system-critical directories"""
+        code, _, body = self.do_post(handler, "/api/export/config", {
+            "enabled": True, "dir": "/System/Library",
+        })
+        assert code == 400
+        data = json.loads(body)
+        assert "系统目录" in data["error"]
+

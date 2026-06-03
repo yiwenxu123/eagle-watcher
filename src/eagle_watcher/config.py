@@ -64,6 +64,13 @@ def _default_config() -> dict:
         "server": {
             "api_key": "",
         },
+        "export": {
+            "enabled": False,
+            "dir": "",
+            "auto": True,
+            "structure": "theme",
+            "themes": [],
+        },
     }
 
 

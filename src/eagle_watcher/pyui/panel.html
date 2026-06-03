@@ -8,6 +8,7 @@
   /* ── 基础 ── */
   *, *::before, *::after { box-sizing: border-box; }
   body { margin: 0; -webkit-font-smoothing: antialiased; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 14px; line-height: 1.625; color: #1d1d1f; background: #f5f5f7; -webkit-user-select: none; user-select: none; }
+  input, textarea, select { -webkit-user-select: text; user-select: text; }
   /* ── 颜色 ── */
   .bg-apple-bg { background: #f5f5f7; } .bg-apple-card { background: #fff; } .bg-apple-blue { background: #0071e3; } .bg-apple-red { background: #ff3b30; }
   .text-apple-text { color: #1d1d1f; } .text-apple-muted { color: #86868b; } .text-apple-blue { color: #0071e3; } .text-apple-red { color: #ff3b30; } .text-apple-green { color: #34c759; }
@@ -102,21 +103,26 @@
     <!-- 配置引导横幅 -->
     <div id="setup-banner" class="hidden bg-apple-card rounded-apple p-3 shadow-sm border border-red-300 fade-in">
       <div class="flex items-center gap-2 mb-1">
-        <span class="text-apple-red font-semibold text-sm">⚠️ 首次使用配置</span>
+        <span id="setup-banner-title" class="text-apple-red font-semibold text-sm">⚠️ 首次使用配置</span>
       </div>
-      <p class="text-[11px] text-apple-text/80 leading-relaxed mb-2">
-        素材管家需要连接 Eagle 才能自动导入素材。请按以下步骤配置：
+      <p id="setup-banner-desc" class="text-[11px] text-apple-text/80 leading-relaxed mb-2">
+        素材管家需要连接 Eagle 才能自动导入素材。
       </p>
-      <ol class="text-[11px] text-apple-text/70 space-y-0.5 ml-4 list-decimal mb-2">
-        <li>打开 <strong>Eagle</strong> 应用</li>
-        <li>进入 Eagle → <strong>设置</strong> → <strong>开发者选项</strong></li>
-        <li>勾选「<strong>允许其他应用连接</strong>」</li>
-        <li>复制显示的 API Token</li>
-        <li>粘贴到 <code>~/.eagle-watcher/config.yaml</code> 的 <code>eagle.token</code> 字段</li>
-        <li>保存后点击下方「重新检测」</li>
+      <ol class="text-[11px] text-apple-text/70 space-y-0.5 ml-4 list-decimal mb-3">
+        <li>打开 Eagle → <strong>设置</strong> → <strong>开发者选项</strong></li>
+        <li>勾选「<strong>允许其他应用连接</strong>」并复制 API Token</li>
+        <li>粘贴到下方输入框，点击「保存并连接」</li>
       </ol>
+      <div class="flex gap-1.5 mb-2">
+        <input id="token-input" type="password" placeholder="粘贴 Eagle API Token"
+               class="flex-1 text-xs px-3 py-1.5 rounded-lg border border-apple-border
+                      focus:outline-none focus:ring-2 focus:ring-apple-blue/30 bg-white"
+               autocomplete="off" spellcheck="false">
+        <button onclick="saveToken()" id="token-save-btn" class="btn-primary text-xs whitespace-nowrap">保存并连接</button>
+      </div>
+      <div id="token-status" class="hidden text-[11px] mb-2"></div>
       <div class="flex gap-2">
-        <button onclick="openEagle()" class="btn-primary text-xs flex-1">📂 打开 Eagle</button>
+        <button onclick="openEagle()" class="btn-secondary text-xs flex-1">📂 打开 Eagle</button>
         <button onclick="refresh()" class="btn-secondary text-xs flex-1">🔄 重新检测</button>
       </div>
     </div>
@@ -228,17 +234,107 @@
       </div>
     </details>
 
+    <!-- 导出工作区 -->
+    <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
+             ontoggle="if(this.open) loadExportStatus()">
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors">
+        📤 导出工作区
+      </summary>
+      <div class="p-3 border-t border-apple-border space-y-2">
+        <div class="flex items-center gap-2">
+          <label class="text-xs flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" id="export-enabled" onchange="saveExportConfig()">
+            <span>启用自动导出</span>
+          </label>
+        </div>
+        <div class="flex gap-1.5">
+          <input id="export-dir" placeholder="导出目录路径（如 ~/Design/剪映素材/）"
+                 class="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-apple-border
+                        focus:outline-none focus:ring-1 focus:ring-apple-blue/30 bg-white">
+          <button onclick="pasteExportDir()" class="btn-secondary text-xs whitespace-nowrap">📋</button>
+          <button onclick="saveExportConfig()" class="btn-primary text-xs whitespace-nowrap">保存</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-apple-muted">目录结构：</label>
+          <select id="export-structure" onchange="saveExportConfig()"
+                  class="text-xs px-2 py-1 rounded-lg border border-apple-border bg-white
+                         focus:outline-none focus:ring-1 focus:ring-apple-blue/30">
+            <option value="theme">按主题分类</option>
+            <option value="date">按日期分类</option>
+            <option value="flat">平铺</option>
+          </select>
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs text-apple-muted">主题过滤（不选则全量导出）：</label>
+          <div id="export-themes-list" class="flex flex-wrap gap-1.5"></div>
+        </div>
+        <div id="export-status" class="text-[10px] text-apple-muted"></div>
+        <div class="flex gap-2">
+          <button onclick="openExportDir()" class="btn-secondary text-xs flex-1">📂 打开目录</button>
+          <button onclick="clearExportDir()" class="btn-secondary text-xs flex-1 text-apple-red">🗑 清空工作区</button>
+        </div>
+        <div class="border-t border-apple-border pt-2 space-y-1.5">
+          <label class="text-xs text-apple-muted">批量导出已有素材：</label>
+          <div class="flex gap-1.5">
+            <select id="export-batch-theme"
+                    class="flex-1 text-xs px-2 py-1.5 rounded-lg border border-apple-border bg-white
+                           focus:outline-none focus:ring-1 focus:ring-apple-blue/30">
+              <option value="">选择主题…</option>
+            </select>
+            <button onclick="batchExportTheme()" class="btn-primary text-xs whitespace-nowrap">导出</button>
+          </div>
+          <div id="export-batch-status" class="text-[10px] text-apple-muted"></div>
+        </div>
+      </div>
+    </details>
+
+    <!-- 知识库管理 -->
+    <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
+             ontoggle="if(this.open) loadKnowledge()">
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors">
+        🧠 知识库管理
+      </summary>
+      <div class="border-t border-apple-border">
+        <!-- 统计摘要 -->
+        <div id="kb-stats" class="px-3 py-2 bg-gray-50 text-[10px] text-apple-muted flex gap-3"></div>
+        <!-- 搜索和筛选 -->
+        <div class="px-3 py-2 flex gap-1.5">
+          <input id="kb-search" type="text" placeholder="搜索关键词…"
+                 oninput="debounceKbSearch()"
+                 class="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-apple-border
+                        focus:outline-none focus:ring-1 focus:ring-apple-blue/30 bg-white">
+          <select id="kb-theme-filter" onchange="loadKnowledge()"
+                  class="text-xs px-2 py-1.5 rounded-lg border border-apple-border bg-white
+                         focus:outline-none min-w-[80px]">
+            <option value="">全部主题</option>
+          </select>
+        </div>
+        <!-- 列表 -->
+        <div id="kb-list" class="max-h-64 overflow-y-auto scrollbar-thin"></div>
+        <!-- 分页 -->
+        <div id="kb-pagination" class="px-3 py-2 border-t border-apple-border text-center"></div>
+      </div>
+    </details>
+
     <!-- 操作历史 -->
     <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
              ontoggle="if(this.open) loadHistory()">
-      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors
-                     flex items-center justify-between">
-        <span>📋 操作历史</span>
-        <span class="text-[10px] text-apple-muted hover:text-apple-red cursor-pointer select-none"
-              onclick="event.stopPropagation(); clearHistory()">清空</span>
+      <summary class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors">
+        <span class="text-sm font-medium">📋 操作历史</span>
+        <div class="flex items-center gap-2" onclick="event.stopPropagation()">
+          <div class="flex bg-gray-100 rounded-full text-[10px]">
+            <button onclick="filterHistory('all')" id="hist-filter-all" class="px-2 py-0.5 rounded-full bg-white shadow-sm font-medium transition-all">全部</button>
+            <button onclick="filterHistory('success')" id="hist-filter-success" class="px-2 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all">成功</button>
+            <button onclick="filterHistory('inbox')" id="hist-filter-inbox" class="px-2 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all">待分类</button>
+          </div>
+          <span class="text-[10px] text-apple-muted hover:text-apple-red cursor-pointer select-none"
+                onclick="clearHistory()">清空</span>
+        </div>
       </summary>
-      <div class="p-3 border-t border-apple-border max-h-48 overflow-y-auto scrollbar-thin" id="history-content">
-        <p class="text-apple-muted text-xs">展开后加载...</p>
+      <div class="px-3 pb-3 max-h-52 overflow-y-auto scrollbar-thin border-t border-apple-border" id="history-content">
+        <div class="flex items-center justify-center py-4">
+          <div class="spinner"></div>
+        </div>
       </div>
     </details>
 
@@ -989,28 +1085,85 @@ function checkInboxDone() {
 
 // ────────── 操作历史 ──────────
 
-async function loadHistory() {
+let _historyItems = [];
+let _historyFilter = 'all';
+
+function _formatHistoryTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const now = new Date();
+  const diffMs = now - d;
+  if (diffMs < 60000) return '刚刚';
+  if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)} 分钟前`;
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function _fileTypeIcon(filename) {
+  if (!filename) return '📄';
+  const ext = filename.split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','webp','bmp','svg','psd','ai','sketch','fig'].includes(ext)) return '🖼';
+  if (['mp4','mov','avi','mkv','webm'].includes(ext)) return '🎬';
+  if (['mp3','wav','flac','aac','ogg'].includes(ext)) return '🎵';
+  if (['pdf','doc','docx','txt','md'].includes(ext)) return '📄';
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '📦';
+  return '📄';
+}
+
+function filterHistory(filter) {
+  _historyFilter = filter;
+  ['all','success','inbox'].forEach(f => {
+    const btn = $(`hist-filter-${f}`);
+    if (f === filter) {
+      btn.className = 'px-2 py-0.5 rounded-full bg-white shadow-sm font-medium transition-all';
+    } else {
+      btn.className = 'px-2 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all';
+    }
+  });
+  _renderHistory();
+}
+
+function _renderHistory() {
   const container = $('history-content');
+  let items = _historyItems;
+  if (_historyFilter === 'success') items = items.filter(h => h.status === 'success');
+  else if (_historyFilter === 'inbox') items = items.filter(h => h.theme === '' || h.theme === '待分类' || h.status !== 'success');
+
+  if (items.length === 0) {
+    container.innerHTML = '<p class="text-apple-muted text-xs text-center py-4">暂无操作记录</p>';
+    return;
+  }
+  container.innerHTML = items.slice(0, 20).map(h => {
+    const t = _formatHistoryTime(h.time);
+    const isSuccess = h.status === 'success';
+    const isInbox = !isSuccess || h.theme === '' || h.theme === '待分类';
+    const icon = isSuccess ? '✅' : (isInbox ? '⚠️' : '❌');
+    const fileIcon = _fileTypeIcon(h.filename);
+    const name = escapeHtml(h.filename || '');
+    const theme = escapeHtml(h.theme || '');
+    const themeHtml = theme ? `<span class="text-apple-blue text-[10px] bg-blue-50 px-1 py-0.5 rounded">${theme}</span>` : '';
+    return `<div class="flex items-center gap-2 py-1.5 border-b border-apple-border/50 last:border-0 text-[11px] fade-in">
+      <span>${icon}</span>
+      <span>${fileIcon}</span>
+      <span class="truncate flex-1 min-w-0">${name}</span>
+      ${themeHtml}
+      <span class="text-apple-muted flex-shrink-0 text-[10px]">${t}</span>
+    </div>`;
+  }).join('');
+  if (_historyItems.length > 20) {
+    container.innerHTML += `<div class="text-center py-1"><span class="text-[10px] text-apple-muted">显示最近 20 条，共 ${_historyItems.length} 条</span></div>`;
+  }
+}
+
+async function loadHistory() {
   try {
     const data = await api('GET', '/api/history');
-    const items = data.items || [];
-    if (items.length === 0) {
-      container.innerHTML = '<p class="text-apple-muted text-xs text-center py-2">暂无操作记录</p>';
-      return;
-    }
-    container.innerHTML = items.map(h => {
-      const t = h.time ? new Date(h.time).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
-      const icon = h.status === 'success' ? '✅' : '❌';
-      const name = escapeHtml(h.filename || '');
-      const theme = escapeHtml(h.theme || '');
-      return `<div class="flex items-center gap-2 py-1 border-b border-apple-border last:border-0 text-[11px]">
-        <span>${icon}</span>
-        <span class="truncate flex-1">${name}${theme ? ' → ' + theme : ''}</span>
-        <span class="text-apple-muted flex-shrink-0">${t}</span>
-      </div>`;
-    }).join('');
+    _historyItems = data.items || [];
+    _renderHistory();
   } catch (e) {
-    container.innerHTML = '<p class="text-apple-red text-xs">加载失败</p>';
+    $('history-content').innerHTML = '<p class="text-apple-red text-xs text-center py-4">加载失败</p>';
   }
 }
 
@@ -1023,6 +1176,52 @@ async function clearHistory() {
     }
   } catch (e) {
     toast('⚠️ 清空失败');
+  }
+}
+
+// ────────── Token 配置 ──────────
+
+async function saveToken() {
+  const input = $('token-input');
+  const btn = $('token-save-btn');
+  const status = $('token-status');
+  const token = (input.value || '').trim();
+  if (!token) {
+    toast('⚠️ 请输入 Token');
+    input.focus();
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '连接中…';
+  status.className = 'hidden';
+  try {
+    const r = await api('POST', '/api/config/token', { token });
+    if (r.ok && r.eagle_online) {
+      // 成功：横幅变绿
+      const banner = $('setup-banner');
+      banner.className = banner.className.replace('border-red-300', 'border-green-300');
+      $('setup-banner-title').className = 'text-green-700 font-semibold text-sm';
+      $('setup-banner-title').textContent = '✅ 已连接 Eagle';
+      $('setup-banner-desc').textContent = '配置完成！素材管家即将开始工作。';
+      status.className = 'text-[11px] text-green-700 mb-2';
+      status.textContent = '连接成功，3 秒后自动关闭…';
+      status.classList.remove('hidden');
+      toast('✅ Eagle 已连接');
+      setTimeout(() => { banner.classList.add('hidden'); refresh(); }, 3000);
+    } else {
+      status.className = 'text-[11px] text-apple-red mb-2';
+      status.textContent = '⚠️ Token 已保存，但无法连接 Eagle。请确认 Eagle 正在运行并开启了开发者选项。';
+      status.classList.remove('hidden');
+      toast('⚠️ Eagle 连接失败');
+    }
+  } catch (e) {
+    status.className = 'text-[11px] text-apple-red mb-2';
+    status.textContent = '⚠️ 保存失败：' + e.message;
+    status.classList.remove('hidden');
+    toast('⚠️ 保存失败');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存并连接';
   }
 }
 
@@ -1075,7 +1274,304 @@ async function togglePin() {
 
 refresh();
 
-// 智能自动刷新：避免打断用户操作
+// ────────── 知识库管理 ──────────
+
+let _kbPage = 1;
+const _kbPerPage = 20;
+let _kbDebounceTimer = null;
+
+function debounceKbSearch() {
+  if (_kbDebounceTimer) clearTimeout(_kbDebounceTimer);
+  _kbDebounceTimer = setTimeout(() => { _kbPage = 1; loadKnowledge(); }, 300);
+}
+
+async function loadKnowledge() {
+  const search = $('kb-search').value.trim();
+  const theme = $('kb-theme-filter').value;
+  try {
+    const params = new URLSearchParams({ page: _kbPage, per_page: _kbPerPage });
+    if (search) params.set('search', search);
+    if (theme) params.set('theme', theme);
+    const data = await api('GET', `/api/knowledge?${params}`);
+    _renderKbStats(data.stats);
+    _renderKbList(data.items || [], data.total || 0);
+    _renderKbPagination(data.page || 1, data.total || 0, data.per_page || _kbPerPage);
+    _populateKbThemeFilter(data.stats);
+  } catch (e) {
+    $('kb-list').innerHTML = '<p class="text-apple-red text-xs text-center py-4">加载失败</p>';
+  }
+}
+
+function _renderKbStats(stats) {
+  if (!stats) { $('kb-stats').innerHTML = ''; return; }
+  const dist = stats.confidence_distribution || {};
+  $('kb-stats').innerHTML = `
+    <span>关键词 <b>${stats.total_keywords}</b></span>
+    <span>主题 <b>${stats.themes}</b></span>
+    <span>平均置信度 <b>${(stats.avg_confidence * 100).toFixed(0)}%</b></span>
+    <span class="text-green-700">高 ${dist.high_80_100 || 0}</span>
+    <span class="text-apple-muted">中 ${dist.medium_50_80 || 0}</span>
+    <span class="text-apple-red">低 ${dist.low_0_50 || 0}</span>
+  `;
+}
+
+function _renderKbList(items, total) {
+  const container = $('kb-list');
+  if (!items.length) {
+    container.innerHTML = '<p class="text-apple-muted text-xs text-center py-4">暂无关键词</p>';
+    return;
+  }
+  container.innerHTML = items.map(it => {
+    const conf = it.confidence || 0;
+    const pct = Math.round(conf * 100);
+    const color = conf >= 0.8 ? '#34c759' : conf >= 0.5 ? '#ff9500' : '#ff3b30';
+    const tags = (it.tags || []).map(t => `<span class="inline-block px-1.5 py-0.5 text-[9px] rounded-full bg-gray-100 text-gray-700">${escapeHtml(t)}</span>`).join(' ');
+    return `
+      <div class="px-3 py-2 border-b border-apple-border flex items-start gap-2 group hover:bg-gray-50 transition-colors" data-kw="${escapeHtml(it.keyword)}">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="font-medium text-xs">${escapeHtml(it.keyword)}</span>
+            <span class="text-apple-muted text-[10px]">→</span>
+            <span class="text-apple-blue text-xs">${escapeHtml(it.theme)}</span>
+          </div>
+          ${tags ? `<div class="mt-0.5 flex flex-wrap gap-1">${tags}</div>` : ''}
+          <div class="mt-0.5 flex items-center gap-2">
+            <div class="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden" style="max-width:80px">
+              <div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <span class="text-[9px]" style="color:${color}">${pct}%</span>
+            <span class="text-[9px] text-apple-muted">${it.match_count || 0}次</span>
+          </div>
+        </div>
+        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 pt-0.5">
+          <button onclick="editKbKeyword('${escapeJsString(it.keyword)}')" class="text-[10px] text-apple-blue hover:underline">编辑</button>
+          <button onclick="deleteKbKeyword('${escapeJsString(it.keyword)}')" class="text-[10px] text-apple-red hover:underline">删除</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function _renderKbPagination(page, total, perPage) {
+  const totalPages = Math.ceil(total / perPage);
+  const container = $('kb-pagination');
+  if (totalPages <= 1) { container.innerHTML = `<span class="text-[10px] text-apple-muted">共 ${total} 条</span>`; return; }
+  let html = '';
+  if (page > 1) html += `<button onclick="_kbPage=${page - 1};loadKnowledge()" class="text-apple-blue text-xs hover:underline">‹ 上一页</button> `;
+  html += `<span class="text-[10px] text-apple-muted">${page}/${totalPages}，共 ${total} 条</span>`;
+  if (page < totalPages) html += ` <button onclick="_kbPage=${page + 1};loadKnowledge()" class="text-apple-blue text-xs hover:underline">下一页 ›</button>`;
+  container.innerHTML = html;
+}
+
+function _populateKbThemeFilter(stats) {
+  if (!stats || !stats.theme_details) return;
+  const select = $('kb-theme-filter');
+  const current = select.value;
+  const themes = Object.keys(stats.theme_details);
+  if (select.options.length - 1 === themes.length) return; // 已填充且未变化
+  select.innerHTML = '<option value="">全部主题</option>';
+  themes.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = `${t} (${stats.theme_details[t].count})`;
+    if (t === current) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+async function editKbKeyword(keyword) {
+  const row = document.querySelector(`[data-kw="${keyword}"]`);
+  if (!row) return;
+  const detail = row.querySelector('.flex-1');
+  const currentTheme = detail.querySelector('.text-apple-blue')?.textContent || '';
+  const currentTags = Array.from(row.querySelectorAll('.rounded-full.bg-gray-100')).map(s => s.textContent.trim());
+
+  detail.innerHTML = `
+    <div class="space-y-1.5">
+      <div class="flex items-center gap-1.5">
+        <span class="font-medium text-xs">${escapeHtml(keyword)}</span>
+        <span class="text-apple-muted text-[10px]">→</span>
+      </div>
+      <input id="kb-edit-theme" value="${escapeJsString(currentTheme)}" placeholder="主题"
+             class="w-full text-xs px-2 py-1 rounded border border-apple-border focus:outline-none focus:ring-1 focus:ring-apple-blue/30">
+      <input id="kb-edit-tags" value="${escapeJsString(currentTags.join(','))}" placeholder="标签（逗号分隔）"
+             class="w-full text-xs px-2 py-1 rounded border border-apple-border focus:outline-none focus:ring-1 focus:ring-apple-blue/30">
+      <div class="flex gap-1.5">
+        <button onclick="_saveKbEdit('${escapeJsString(keyword)}')" class="text-[10px] text-white bg-apple-blue px-2 py-0.5 rounded">保存</button>
+        <button onclick="loadKnowledge()" class="text-[10px] text-apple-muted hover:text-apple-text">取消</button>
+      </div>
+    </div>`;
+  detail.querySelector('input').focus();
+}
+
+async function _saveKbEdit(keyword) {
+  const theme = $('kb-edit-theme').value.trim();
+  const tagsStr = $('kb-edit-tags').value.trim();
+  if (!theme) { toast('⚠️ 主题不能为空'); return; }
+  const tags = tagsStr ? tagsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [];
+  try {
+    await api('POST', '/api/knowledge/update', { keyword, theme, tags });
+    toast('✅ 已保存');
+    loadKnowledge();
+  } catch (e) {
+    toast('⚠️ 保存失败: ' + e.message);
+  }
+}
+
+async function deleteKbKeyword(keyword) {
+  if (!confirm(`确认删除关键词「${keyword}」？`)) return;
+  try {
+    await api('POST', '/api/knowledge/delete', { keyword });
+    toast('🗑 已删除');
+    loadKnowledge();
+  } catch (e) {
+    toast('⚠️ 删除失败: ' + e.message);
+  }
+}
+
+// ────────── 导出工作区 ──────────
+
+async function loadExportStatus() {
+  try {
+    const data = await api('GET', '/api/export/status');
+    $('export-enabled').checked = !!data.enabled;
+    // 用户正在输入时不覆盖
+    if (document.activeElement !== $('export-dir')) {
+      $('export-dir').value = data.dir || '';
+    }
+    $('export-structure').value = data.structure || 'theme';
+    // 渲染主题过滤 checkbox
+    const filterList = data.themes_filter || [];
+    const container = $('export-themes-list');
+    container.innerHTML = '';
+    _availableThemes.forEach(t => {
+      const label = document.createElement('label');
+      label.className = 'text-xs flex items-center gap-1 cursor-pointer';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = t;
+      cb.checked = filterList.includes(t);
+      cb.className = 'export-theme-cb';
+      cb.onchange = () => saveExportConfig();
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(t));
+      container.appendChild(label);
+    });
+    _populateBatchThemeSelect();
+    const sizeMB = (data.size_bytes / 1024 / 1024).toFixed(1);
+    const distThemes = data.themes || {};
+    const themeCount = Object.keys(distThemes).length;
+    let statusText = `已导出 ${data.file_count} 个文件 | ${sizeMB}MB`;
+    if (themeCount > 0) {
+      statusText += ` | ${themeCount} 个主题`;
+    }
+    $('export-status').textContent = statusText;
+  } catch (e) {
+    $('export-status').textContent = '加载失败';
+  }
+}
+
+async function saveExportConfig() {
+  const enabled = $('export-enabled').checked;
+  const dir = $('export-dir').value.trim();
+  const structure = $('export-structure').value;
+  const themes = [...document.querySelectorAll('.export-theme-cb:checked')].map(cb => cb.value);
+  try {
+    await api('POST', '/api/export/config', { enabled, dir, structure, themes });
+    toast('✅ 导出配置已保存');
+    // 只刷新统计，不重置表单（避免覆盖用户正在输入的内容）
+    _refreshExportStats();
+  } catch (e) {
+    toast('⚠️ 保存失败: ' + e.message);
+  }
+}
+
+async function _refreshExportStats() {
+  try {
+    const data = await api('GET', '/api/export/status');
+    const sizeMB = (data.size_bytes / 1024 / 1024).toFixed(1);
+    const distThemes = data.themes || {};
+    const themeCount = Object.keys(distThemes).length;
+    let statusText = `已导出 ${data.file_count} 个文件 | ${sizeMB}MB`;
+    if (themeCount > 0) statusText += ` | ${themeCount} 个主题`;
+    $('export-status').textContent = statusText;
+  } catch (e) {}
+}
+
+async function pasteExportDir() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      $('export-dir').value = text.trim();
+      saveExportConfig();
+    }
+  } catch (e) {
+    toast('⚠️ 无法读取剪贴板，请手动粘贴 (Cmd+V)');
+  }
+}
+
+// 填充批量导出主题下拉框
+function _populateBatchThemeSelect() {
+  const select = $('export-batch-theme');
+  if (select.options.length > 1) return; // 已填充
+  _availableThemes.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t;
+    select.appendChild(opt);
+  });
+}
+
+async function batchExportTheme() {
+  const theme = $('export-batch-theme').value;
+  if (!theme) { toast('⚠️ 请先选择主题'); return; }
+  if (!(await confirmAsync(`将导出「${theme}」主题下所有 Eagle 素材到导出工作区，确认？`))) return;
+  const status = $('export-batch-status');
+  status.textContent = '正在导出…（素材较多时可能需要几分钟）';
+  try {
+    // 动态超时：5 分钟上限，足够处理大多数主题
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 300000); // 5 分钟
+    const headers = {'Content-Type': 'application/json'};
+    if (SESSION_TOKEN) headers['X-Session-Token'] = SESSION_TOKEN;
+    const resp = await fetch(API + '/api/export/theme', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ theme }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    status.textContent = `✅ 已导出 ${data.exported || 0} 个文件，跳过 ${data.skipped || 0} 个`;
+    _refreshExportStats();
+  } catch (e) {
+    status.textContent = '⚠️ 导出失败: ' + (e.name === 'AbortError' ? '请求超时（5分钟）' : e.message);
+  }
+}
+
+async function openExportDir() {
+  const dir = $('export-dir').value.trim();
+  if (!dir) { toast('⚠️ 请先设置导出目录'); return; }
+  try {
+    await api('POST', '/api/action', { action: 'open-path', path: dir });
+  } catch (e) {
+    toast('⚠️ 打开失败: ' + e.message);
+  }
+}
+
+async function clearExportDir() {
+  if (!(await confirmAsync('确认清空导出工作区？所有已导出的文件将被删除。'))) return;
+  try {
+    const r = await api('POST', '/api/export/clear', { confirm: true });
+    toast(`🗑 已清空 ${r.cleared || 0} 个项目`);
+    loadExportStatus();
+  } catch (e) {
+    toast('⚠️ 清空失败: ' + e.message);
+  }
+}
+
+// ────────── 智能自动刷新 ──────────
+
 function isUserInteracting() {
   const el = document.activeElement;
   if (!el) return false;

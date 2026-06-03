@@ -28,7 +28,7 @@ def _load() -> dict:
         try:
             with open(KNOWLEDGE_PATH) as f:
                 data = yaml.safe_load(f)
-        except (yaml.YAMLError, OSError) as e:
+        except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
             _LOG.warning("知识库文件损坏，已重置：%s", e)
             return {"keywords_mapping": {}, "sources": {}}
         return data or {"keywords_mapping": {}, "sources": {}}
@@ -297,3 +297,81 @@ def get_knowledge_stats() -> dict:
             "low_0_50": low_conf,
         },
     }
+
+
+# ────────── CRUD ──────────
+
+
+def list_keywords(search: str = "", theme: str = "", sort: str = "confidence",
+                  page: int = 1, per_page: int = 20) -> dict:
+    """分页列出关键词，支持搜索、按主题筛选、排序。
+
+    Returns:
+        {items: [...], total: int, page: int, per_page: int}
+    """
+    data = _load()
+    mapping = data.get("keywords_mapping", {})
+
+    items = []
+    for keyword, info in mapping.items():
+        # 主题筛选
+        if theme and info.get("theme") != theme:
+            continue
+        # 搜索筛选
+        if search and search.lower() not in keyword.lower():
+            continue
+        items.append({
+            "keyword": keyword,
+            "theme": info.get("theme", ""),
+            "tags": info.get("tags", []),
+            "confidence": info.get("confidence", DEFAULT_CONFIDENCE_NEW),
+            "match_count": info.get("match_count", 0),
+            "first_seen": info.get("first_seen", ""),
+        })
+
+    # 排序
+    sort_keys = {
+        "confidence": lambda x: x["confidence"],
+        "match_count": lambda x: x["match_count"],
+        "keyword": lambda x: x["keyword"].lower(),
+        "first_seen": lambda x: x["first_seen"],
+    }
+    key_fn = sort_keys.get(sort, sort_keys["confidence"])
+    items.sort(key=key_fn, reverse=(sort != "keyword"))
+
+    total = len(items)
+    start = (page - 1) * per_page
+    return {
+        "items": items[start:start + per_page],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
+
+
+def update_keyword(keyword: str, theme: str = None, tags: list[str] = None) -> bool:
+    """修改已有关键词的主题和/或标签。返回是否成功。"""
+    with _knowledge_lock:
+        data = _load()
+        mapping = data.get("keywords_mapping", {})
+        if keyword not in mapping:
+            return False
+        entry = mapping[keyword]
+        if theme is not None:
+            entry["theme"] = theme
+        if tags is not None:
+            entry["tags"] = tags
+        _save(data)
+        return True
+
+
+def delete_keyword(keyword: str) -> bool:
+    """删除指定关键词。返回是否成功。"""
+    with _knowledge_lock:
+        data = _load()
+        mapping = data.get("keywords_mapping", {})
+        if keyword not in mapping:
+            return False
+        del mapping[keyword]
+        _save(data)
+        return True

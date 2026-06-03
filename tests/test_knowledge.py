@@ -21,6 +21,9 @@ from eagle_watcher.knowledge import (
     record_miss,
     cleanup_stale_entries,
     get_knowledge_stats,
+    list_keywords,
+    update_keyword,
+    delete_keyword,
     DEFAULT_CONFIDENCE_NEW,
     CONFIDENCE_PER_MATCH,
     MAX_CONFIDENCE,
@@ -549,6 +552,167 @@ class TestThreadSafety:
             MAX_CONFIDENCE,
         )
         assert entry["confidence"] == pytest.approx(expected_conf)
+
+
+# ════════════════════════════════════════════════════════════
+#  list_keywords
+# ════════════════════════════════════════════════════════════
+
+
+class TestListKeywords:
+    """Pagination, search filter, theme filter, sorting."""
+
+    def test_empty_list(self, mock_data_dir):
+        _clear_knowledge()
+        result = list_keywords()
+        assert result["items"] == []
+        assert result["total"] == 0
+        assert result["page"] == 1
+
+    def test_returns_all_keywords(self, mock_data_dir):
+        _seed_knowledge()
+        result = list_keywords()
+        assert result["total"] == 2
+        keywords = {it["keyword"] for it in result["items"]}
+        assert keywords == {"白起", "兵马俑"}
+
+    def test_search_filter(self, mock_data_dir):
+        _seed_knowledge()
+        result = list_keywords(search="白起")
+        assert result["total"] == 1
+        assert result["items"][0]["keyword"] == "白起"
+
+    def test_search_case_insensitive(self, mock_data_dir):
+        _clear_knowledge()
+        record_match("poster.jpg", "poster", "设计", ["海报"])
+        result = list_keywords(search="POSTER")
+        assert result["total"] == 1
+
+    def test_theme_filter(self, mock_data_dir):
+        _seed_knowledge()
+        result = list_keywords(theme="武安侯")
+        assert result["total"] == 1
+        assert result["items"][0]["theme"] == "武安侯"
+
+    def test_combined_search_and_theme(self, mock_data_dir):
+        _seed_knowledge()
+        result = list_keywords(search="白起", theme="秦始皇")
+        assert result["total"] == 0
+
+    def test_pagination(self, mock_data_dir):
+        _clear_knowledge()
+        for i in range(5):
+            record_match(f"kw_{i}.jpg", f"kw_{i}", "主题", [])
+        result = list_keywords(page=1, per_page=2)
+        assert len(result["items"]) == 2
+        assert result["total"] == 5
+        result2 = list_keywords(page=3, per_page=2)
+        assert len(result2["items"]) == 1
+
+    def test_sort_by_confidence_desc(self, mock_data_dir):
+        _clear_knowledge()
+        _direct_create_entry("low", "T", confidence=0.3)
+        _direct_create_entry("high", "T", confidence=0.9)
+        result = list_keywords(sort="confidence")
+        assert result["items"][0]["keyword"] == "high"
+
+    def test_sort_by_keyword_asc(self, mock_data_dir):
+        _clear_knowledge()
+        record_match("b.jpg", "b", "T", [])
+        record_match("a.jpg", "a", "T", [])
+        result = list_keywords(sort="keyword")
+        assert result["items"][0]["keyword"] == "a"
+
+    def test_sort_by_match_count(self, mock_data_dir):
+        _clear_knowledge()
+        record_match("x.jpg", "x", "T", [])
+        record_match("y.jpg", "y", "T", [])
+        record_match("y2.jpg", "y", "T", [])
+        result = list_keywords(sort="match_count")
+        assert result["items"][0]["keyword"] == "y"
+
+    def test_item_fields(self, mock_data_dir):
+        _seed_knowledge()
+        result = list_keywords()
+        item = result["items"][0]
+        assert "keyword" in item
+        assert "theme" in item
+        assert "tags" in item
+        assert "confidence" in item
+        assert "match_count" in item
+        assert "first_seen" in item
+
+
+# ════════════════════════════════════════════════════════════
+#  update_keyword
+# ════════════════════════════════════════════════════════════
+
+
+class TestUpdateKeyword:
+    """Update theme, tags, or both. Non-existent keyword returns False."""
+
+    def test_update_theme(self, mock_data_dir):
+        _seed_knowledge()
+        ok = update_keyword("白起", theme="秦国名将")
+        assert ok is True
+        data = _load()
+        assert data["keywords_mapping"]["白起"]["theme"] == "秦国名将"
+
+    def test_update_tags(self, mock_data_dir):
+        _seed_knowledge()
+        ok = update_keyword("白起", tags=["新标签"])
+        assert ok is True
+        data = _load()
+        assert data["keywords_mapping"]["白起"]["tags"] == ["新标签"]
+
+    def test_update_theme_and_tags(self, mock_data_dir):
+        _seed_knowledge()
+        ok = update_keyword("白起", theme="新主题", tags=["tag1", "tag2"])
+        assert ok is True
+        entry = _load()["keywords_mapping"]["白起"]
+        assert entry["theme"] == "新主题"
+        assert entry["tags"] == ["tag1", "tag2"]
+
+    def test_update_nonexistent_returns_false(self, mock_data_dir):
+        _clear_knowledge()
+        ok = update_keyword("不存在", theme="T")
+        assert ok is False
+
+    def test_update_noop_when_no_args(self, mock_data_dir):
+        _seed_knowledge()
+        ok = update_keyword("白起")
+        assert ok is True
+        entry = _load()["keywords_mapping"]["白起"]
+        assert entry["theme"] == "武安侯"  # unchanged
+
+
+# ════════════════════════════════════════════════════════════
+#  delete_keyword
+# ════════════════════════════════════════════════════════════
+
+
+class TestDeleteKeyword:
+    """Delete existing keyword, non-existent returns False."""
+
+    def test_delete_existing(self, mock_data_dir):
+        _seed_knowledge()
+        ok = delete_keyword("白起")
+        assert ok is True
+        data = _load()
+        assert "白起" not in data["keywords_mapping"]
+        assert "兵马俑" in data["keywords_mapping"]  # other entry untouched
+
+    def test_delete_nonexistent_returns_false(self, mock_data_dir):
+        _clear_knowledge()
+        ok = delete_keyword("不存在")
+        assert ok is False
+
+    def test_delete_last_entry(self, mock_data_dir):
+        _clear_knowledge()
+        record_match("x.jpg", "x", "T", [])
+        ok = delete_keyword("x")
+        assert ok is True
+        assert _load()["keywords_mapping"] == {}
 
 
 # ════════════════════════════════════════════════════════════
