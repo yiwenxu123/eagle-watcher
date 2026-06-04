@@ -6,10 +6,12 @@ Eagle HTTP API 封装
 import json
 import logging
 import os
+import time
 import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Optional, Any
+from functools import wraps
 
 _LOG = logging.getLogger(__name__)
 
@@ -18,7 +20,73 @@ FILE_TIMEOUT = 60
 URL_TIMEOUT = 120
 PING_TIMEOUT = 5
 
-# ────────────── Token 解析 ──────────────
+# 重试配置
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1  # 秒
+MAX_RETRY_DELAY = 10  # 秒
+
+# 可重试的 HTTP 状态码
+RETRYABLE_STATUS_CODES = {502, 503, 504}
+
+# 可重试的异常类型
+RETRYABLE_EXCEPTIONS = (
+    urllib.error.URLError,
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """判断错误是否可重试"""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in RETRYABLE_STATUS_CODES
+    if isinstance(error, urllib.error.URLError):
+        # 网络错误通常可重试
+        return True
+    if isinstance(error, RETRYABLE_EXCEPTIONS):
+        return True
+    return False
+
+
+def _calculate_retry_delay(attempt: int) -> float:
+    """计算重试延迟（指数退避）"""
+    delay = INITIAL_RETRY_DELAY * (2 ** attempt)
+    return min(delay, MAX_RETRY_DELAY)
+
+
+def retry_on_failure(max_retries: int = MAX_RETRIES):
+    """重试装饰器：自动重试可恢复的错误
+
+    Args:
+        max_retries: 最大重试次数（默认 3）
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    if attempt == max_retries:
+                        # 最后一次尝试失败，抛出异常
+                        raise
+                    if not _is_retryable_error(e):
+                        # 不可重试的错误，立即抛出
+                        raise
+                    # 计算重试延迟
+                    delay = _calculate_retry_delay(attempt)
+                    _LOG.warning(
+                        "API 调用失败，%d 秒后重试 (尝试 %d/%d): %s",
+                        delay, attempt + 1, max_retries, e
+                    )
+                    time.sleep(delay)
+            # 不应该到达这里，但作为安全措施
+            raise last_error
+        return wrapper
+    return decorator
 
 
 def resolve_token(cfg: dict) -> str:
@@ -51,6 +119,7 @@ class EagleAPI:
     def _url(self, path: str) -> str:
         return f"{self.base_url}/api/{path.lstrip('/')}"
 
+    @retry_on_failure()
     def _get(self, path: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
         url = self._url(path)
         if self.token:
@@ -59,6 +128,7 @@ class EagleAPI:
         with self._opener.open(urllib.request.Request(url), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
 
+    @retry_on_failure()
     def _post(self, path: str, body: Optional[dict] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
         url = self._url(path)
         if self.token:

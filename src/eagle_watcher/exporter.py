@@ -9,6 +9,104 @@ from typing import Optional
 
 _LOG = logging.getLogger("exporter")
 
+# 默认导出目录大小上限（10GB）
+DEFAULT_MAX_EXPORT_SIZE = 10 * 1024 * 1024 * 1024  # 10GB in bytes
+
+# 最小可用空间要求（1GB）
+MIN_FREE_SPACE = 1 * 1024 * 1024 * 1024  # 1GB in bytes
+
+
+def _get_export_dir_size(export_dir: Path) -> int:
+    """计算导出目录的总大小（字节）"""
+    total_size = 0
+    try:
+        for entry in export_dir.rglob("*"):
+            if entry.is_file():
+                try:
+                    total_size += entry.stat().st_size
+                except OSError:
+                    pass
+    except OSError as e:
+        _LOG.warning("计算导出目录大小失败: %s", e)
+    return total_size
+
+
+def _get_oldest_files(export_dir: Path, limit: int = 100) -> list[tuple[float, Path]]:
+    """获取导出目录中最旧的文件列表（按修改时间排序）"""
+    files = []
+    try:
+        for entry in export_dir.rglob("*"):
+            if entry.is_file():
+                try:
+                    mtime = entry.stat().st_mtime
+                    files.append((mtime, entry))
+                except OSError:
+                    pass
+    except OSError as e:
+        _LOG.warning("扫描导出目录失败: %s", e)
+
+    # 按修改时间排序（最旧的在前）
+    files.sort(key=lambda x: x[0])
+    return files[:limit]
+
+
+def _cleanup_export_dir(export_dir: Path, max_size: int) -> int:
+    """清理导出目录，确保不超过最大大小限制
+
+    Args:
+        export_dir: 导出目录路径
+        max_size: 最大大小限制（字节）
+
+    Returns:
+        清理的文件数量
+    """
+    current_size = _get_export_dir_size(export_dir)
+    if current_size <= max_size:
+        return 0
+
+    cleared = 0
+    target_size = int(max_size * 0.8)  # 清理到 80%，避免频繁清理
+
+    # 获取最旧的文件
+    oldest_files = _get_oldest_files(export_dir, limit=500)
+
+    for mtime, file_path in oldest_files:
+        if current_size <= target_size:
+            break
+
+        try:
+            file_size = file_path.stat().st_size
+            file_path.unlink()
+            current_size -= file_size
+            cleared += 1
+            _LOG.debug("清理旧文件: %s (%.2f MB)", file_path.name, file_size / 1024 / 1024)
+        except OSError as e:
+            _LOG.warning("清理文件失败 %s: %s", file_path, e)
+
+    if cleared:
+        _LOG.info("导出目录清理: 删除 %d 个文件，释放 %.2f MB",
+                  cleared, (_get_export_dir_size(export_dir) - current_size) / 1024 / 1024)
+
+    return cleared
+
+
+def _check_disk_space(path: Path, min_free: int = MIN_FREE_SPACE) -> bool:
+    """检查磁盘可用空间是否足够
+
+    Args:
+        path: 要检查的路径
+        min_free: 最小可用空间要求（字节）
+
+    Returns:
+        True 表示空间足够，False 表示空间不足
+    """
+    try:
+        stat = shutil.disk_usage(path)
+        return stat.free >= min_free
+    except OSError as e:
+        _LOG.warning("检查磁盘空间失败: %s", e)
+        return False
+
 
 def export_file(source_path: str, theme: str, filename: str, cfg: dict) -> Optional[str]:
     """将文件 copy 到导出工作区。返回目标路径或 None（未启用/跳过）。
@@ -36,6 +134,21 @@ def export_file(source_path: str, theme: str, filename: str, cfg: dict) -> Optio
         return None
 
     export_dir = Path(dir_str).expanduser()
+
+    # 检查磁盘空间
+    if not _check_disk_space(export_dir):
+        _LOG.warning("磁盘空间不足，跳过导出: %s", filename)
+        return None
+
+    # 检查导出目录大小限制
+    max_size = export_cfg.get("max_size_bytes", DEFAULT_MAX_EXPORT_SIZE)
+    if max_size > 0:
+        current_size = _get_export_dir_size(export_dir)
+        if current_size >= max_size:
+            _LOG.info("导出目录已达上限 (%.2f GB)，开始清理...",
+                      current_size / 1024 / 1024 / 1024)
+            _cleanup_export_dir(export_dir, max_size)
+
     structure = export_cfg.get("structure", "theme")
 
     if structure == "theme":
@@ -193,9 +306,20 @@ def export_by_theme(theme: str, eagle_api, cfg: dict) -> dict:
     if not folder_id:
         return {"exported": 0, "skipped": 0, "error": f"无法获取 Eagle 文件夹「{eagle_folder}」"}
 
-    # 列出文件夹中所有素材
+    # 列出文件夹中所有素材（支持分页，防止大数量主题导出不完整）
     try:
-        items = eagle_api.list_items(folders=folder_id)
+        all_items = []
+        batch_size = 100
+        offset = 0
+        while True:
+            batch = eagle_api.list_items(folders=folder_id, limit=batch_size, offset=offset)
+            if not batch:
+                break
+            all_items.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        items = all_items
     except Exception as e:
         _LOG.warning("批量导出「%s」: 获取素材列表失败: %s", theme, e)
         return {"exported": 0, "skipped": 0, "error": f"获取素材列表失败: {e}"}

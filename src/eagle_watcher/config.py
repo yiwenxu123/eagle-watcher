@@ -70,6 +70,7 @@ def _default_config() -> dict:
             "auto": True,
             "structure": "theme",
             "themes": [],
+            "max_size_bytes": 10 * 1024 * 1024 * 1024,  # 10GB
         },
     }
 
@@ -162,6 +163,11 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
     ai_cfg = cfg.get("ai", {})
     if not ai_cfg.get("api_key"):
         _LOG.warning("ai.api_key 未配置，AI 视觉分析不可用")
+
+    # 验证 Server 配置（仅在配置存在时检查）
+    server_cfg = cfg.get("server", {})
+    if server_cfg and not server_cfg.get("api_key"):
+        _LOG.warning("server.api_key 未配置，HTTP API 无认证保护（仅 localhost 安全）")
 
     # 验证路径配置
     paths_cfg = cfg.get("paths", {})

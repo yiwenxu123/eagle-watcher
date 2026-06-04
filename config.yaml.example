@@ -13,10 +13,33 @@ paths:
   #   - "/Users/Shared/Designs"
   watch_interval: 2.0               # 监控轮询间隔（秒）
 
+delete_after_import: "trash"        # 导入后原始文件处理: "keep" | "trash"
+
+import_filters:
+  extensions: []                    # 空列表=不过滤；填入如 [".jpg", ".png"] 则仅处理匹配的文件
+  skip_extensions:                  # 始终跳过临时/下载中文件
+    - ".tmp"
+    - ".part"
+    - ".download"
+    - ".crdownload"
+
 notifications:
   inbox_reminder: true              # 有待分类素材时通知
-  import_success: false             # 导入成功时通知
+  import_success: false             # 导入成功时通知（批量处理时会自动节流）
 
 ai:
   api_key: ""                       # ← DashScope API Key（Qwen-VL 视觉分析用）
-  model: "qwen-vl-max"              # 模型名称
+  model: "qwen-vl-max"              # AI 模型名称
+
+server:
+  api_key: ""                       # ← HTTP API 认证密钥（不设置则无认证）
+                                    #   远程 Agent 通过 X-API-Key header 传入
+                                    #   /ping 端点始终开放
+
+export:                             # 导出工作区（将素材同步到本地目录）
+  enabled: false                    # 是否启用导出
+  dir: ""                           # 导出目录路径（如 "~/Desktop/Export"）
+  auto: true                        # 自动导出新导入的素材
+  structure: "theme"                # 目录结构: "theme" | "date" | "flat"
+  themes: []                        # 导出主题过滤（空=全部，非空=仅导出匹配主题）
+  max_size_bytes: 10737418240       # 导出目录大小上限（默认 10GB）

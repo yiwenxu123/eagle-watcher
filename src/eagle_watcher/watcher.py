@@ -5,6 +5,7 @@ Downloads 文件夹监控
 使用分层可回退文件监控（FSEvents → inode 轮询）。
 """
 
+import hashlib
 import logging
 import os
 import threading
@@ -31,6 +32,47 @@ _MAX_RETRIES = 3
 _MAX_AI_FILE_SIZE = 20 * 1024 * 1024  # 20MB - Qwen-VL API limit
 _AI_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}  # 支持的文件格式
 _retry_lock = threading.Lock()
+
+# 文件指纹缓存：用于精确去重
+_file_fingerprint_cache: dict[str, str] = {}  # file_path -> fingerprint
+_fingerprint_cache_lock = threading.Lock()
+
+# 通知节流：避免批量处理时通知轰炸
+_last_notify_time: float = 0
+_notify_cooldown = 30  # 同类型通知最小间隔（秒）
+_notify_lock = threading.Lock()
+
+
+def _get_file_fingerprint(file_path: str) -> str:
+    """获取文件指纹（MD5 哈希），用于精确去重
+
+    使用缓存避免重复计算，缓存大小限制为 1000 个文件
+    """
+    with _fingerprint_cache_lock:
+        if file_path in _file_fingerprint_cache:
+            return _file_fingerprint_cache[file_path]
+
+    try:
+        # 只读取前 1MB 计算哈希，提高性能
+        hash_md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hash_md5.update(chunk)
+        fingerprint = hash_md5.hexdigest()
+
+        # 更新缓存（限制大小）
+        with _fingerprint_cache_lock:
+            if len(_file_fingerprint_cache) >= 1000:
+                # 清理最旧的 500 个条目
+                keys_to_remove = list(_file_fingerprint_cache.keys())[:500]
+                for key in keys_to_remove:
+                    del _file_fingerprint_cache[key]
+            _file_fingerprint_cache[file_path] = fingerprint
+
+        return fingerprint
+    except Exception as e:
+        _LOG.warning("计算文件指纹失败 %s: %s", file_path, e)
+        return ""
 
 # AI 标签中的通用英文词，不适合作为知识库关键词（避免污染）
 _GENERIC_AI_TAGS = frozenset({
@@ -227,6 +269,10 @@ def scan_directory(eagle: EagleAPI, directory: str, recursive: bool = True,
         print(f"\n✅ 扫描完成：{directory}")
         print(f"   总计 {actual_total} 个文件 → 处理 {processed} 个，跳过 {skipped} 个，失败 {failed} 个")
 
+        # 扫描完成汇总通知
+        if processed > 0:
+            notify("素材管家", f"📂 目录扫描完成：处理 {processed} 个文件，失败 {failed} 个")
+
     thread = threading.Thread(target=_worker, daemon=True, name="dir-scan")
     thread.start()
 
@@ -252,6 +298,7 @@ def _trash_file(file_path: str) -> bool:
 
 def _check_result(result: dict, filename: str, theme: str, tags: list[str],
                    file_path: str = ""):
+    global _last_notify_time
     sm = get_state_manager()
     if result.get("status") == "success":
         theme_label = theme or "通用箱"
@@ -285,9 +332,14 @@ def _check_result(result: dict, filename: str, theme: str, tags: list[str],
             else:
                 _LOG.error("移入废纸篓失败，保留原始文件: %s", filename)
 
+        # 节流通知：批量处理时聚合，避免通知轰炸
+        now = time.time()
         if theme:
             if cfg.get("notifications", {}).get("import_success", False):
-                notify("素材管家", f"✅ {filename} → {theme_label}")
+                with _notify_lock:
+                    if now - _last_notify_time >= _notify_cooldown:
+                        notify("素材管家", f"✅ {filename} → {theme_label}")
+                        _last_notify_time = now
         else:
             if sm.check_and_set_inbox_notified():
                 notify("素材管家", f"📦 通用箱有新素材：{filename}")
@@ -369,11 +421,21 @@ def _learn_ai_knowledge(filename: str, ai_tags: list[str]) -> None:
 def _process_file(eagle: EagleAPI, file_path: str):
     filename = Path(file_path).name
 
-    # Simple conflict check: skip if same filename+size exists in recent 50 items
+    # 优化的去重检查：使用 StateManager 的已处理文件集合（更可靠）
+    # 注意：这个检查在 _on_file_detected 中已经做过，这里作为额外的安全网
+    sm = get_state_manager()
+    if sm.is_file_processed(file_path):
+        _LOG.debug("文件已处理过（StateManager 检查）: %s", filename)
+        return
+
+    # 计算文件指纹，用于精确去重
+    file_fingerprint = _get_file_fingerprint(file_path)
     file_size = os.path.getsize(file_path)
     file_name = Path(file_path).name
+
+    # Eagle 端去重：检查最近 100 个文件（扩大范围）
     try:
-        recent = eagle.list_items(order_by="-btime", limit=50)
+        recent = eagle.list_items(order_by="-btime", limit=100)
         for item in recent:
             item_name = item.get("name", "")
             item_ext = item.get("ext", "")
@@ -383,6 +445,8 @@ def _process_file(eagle: EagleAPI, file_path: str):
                 item_size = item.get("size", 0)
                 if item_size and abs(item_size - file_size) < 1024:
                     _LOG.info("跳过已存在的文件: %s (同名+同大小)", file_name)
+                    # 标记为已处理，避免后续重复检查
+                    sm.mark_file_processed(file_path)
                     return
     except Exception:
         _LOG.debug("文件去重检查失败（非阻塞）: %s", file_name)

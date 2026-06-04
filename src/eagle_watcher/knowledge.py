@@ -4,6 +4,7 @@ import re
 import threading
 import tempfile
 import os
+import fcntl
 import logging
 import yaml
 from datetime import datetime, timedelta
@@ -15,26 +16,45 @@ _knowledge_lock = threading.RLock()
 
 DATA_DIR = Path.home() / ".eagle-watcher"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.yaml"
+LOCK_PATH = DATA_DIR / "knowledge.lock"
 
 DEFAULT_CONFIDENCE_NEW = 0.7
 CONFIDENCE_PER_MATCH = 0.15
 MAX_CONFIDENCE = 0.98
 
+# 文件锁超时时间（秒）
+_FILE_LOCK_TIMEOUT = 5
+
+
+def _acquire_file_lock(lock_file, timeout=_FILE_LOCK_TIMEOUT):
+    """获取文件锁，超时后抛出异常"""
+    import time
+    start_time = time.time()
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except (IOError, OSError):
+            if time.time() - start_time >= timeout:
+                raise TimeoutError(f"获取文件锁超时 ({timeout}s)")
+            time.sleep(0.01)
+
 
 def _load() -> dict:
-    with _knowledge_lock:
-        if not KNOWLEDGE_PATH.exists():
-            return {"keywords_mapping": {}, "sources": {}}
-        try:
-            with open(KNOWLEDGE_PATH) as f:
-                data = yaml.safe_load(f)
-        except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
-            _LOG.warning("知识库文件损坏，已重置：%s", e)
-            return {"keywords_mapping": {}, "sources": {}}
-        return data or {"keywords_mapping": {}, "sources": {}}
+    """加载知识库数据（需要外部持有 _knowledge_lock）"""
+    if not KNOWLEDGE_PATH.exists():
+        return {"keywords_mapping": {}, "sources": {}}
+    try:
+        with open(KNOWLEDGE_PATH) as f:
+            data = yaml.safe_load(f)
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
+        _LOG.warning("知识库文件损坏，已重置：%s", e)
+        return {"keywords_mapping": {}, "sources": {}}
+    return data or {"keywords_mapping": {}, "sources": {}}
 
 
 def _save(data: dict):
+    """保存知识库数据（需要外部持有 _knowledge_lock）"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".yaml.tmp")
     try:
@@ -49,9 +69,35 @@ def _save(data: dict):
         raise
 
 
+def _atomic_operation(operation_name: str):
+    """装饰器：确保整个读-改-改操作的原子性
+
+    使用文件锁保护整个操作周期，防止并发修改导致数据丢失。
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(LOCK_PATH, "w") as lock_file:
+                    _acquire_file_lock(lock_file)
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except TimeoutError:
+                _LOG.error("知识库操作超时: %s", operation_name)
+                raise
+            except Exception as e:
+                _LOG.error("知识库操作失败: %s - %s", operation_name, e)
+                raise
+        return wrapper
+    return decorator
+
+
 # ────────── 匹配 ──────────
 
 
+@_atomic_operation("match_by_filename")
 def match_by_filename(filename: str) -> Optional[dict]:
     # O(n) 线性扫描所有关键词。当前规模（<1000 条）性能可接受。
     # 当知识库超过 5000 条时，应考虑构建倒排索引：token → [keyword]
@@ -125,6 +171,7 @@ def match_by_filename(filename: str) -> Optional[dict]:
 # ────────── 学习 ──────────
 
 
+@_atomic_operation("record_match")
 def record_match(filename: str, keyword: str, theme: str, tags: list[str]):
     with _knowledge_lock:
         data = _load()
@@ -155,6 +202,7 @@ def record_match(filename: str, keyword: str, theme: str, tags: list[str]):
         _save(data)
 
 
+@_atomic_operation("record_miss")
 def record_miss(filename: str, theme: str = "__inbox__"):
     """记录未匹配的文件（仅统计，不再自动学习关键词避免噪音污染）"""
     if theme == "__inbox__":
@@ -182,6 +230,7 @@ def record_miss(filename: str, theme: str = "__inbox__"):
 # ────────── 来源匹配 ──────────
 
 
+@_atomic_operation("match_by_source")
 def match_by_source(source_url: str) -> Optional[dict]:
     data = _load()
     sources = data.get("sources", {})
@@ -198,6 +247,7 @@ def match_by_source(source_url: str) -> Optional[dict]:
 # ────────── 清理与统计 ──────────
 
 
+@_atomic_operation("cleanup_stale_entries")
 def cleanup_stale_entries(max_age_days: int = 90, min_confidence: float = 0.3) -> dict:
     """清理知识库中的过期和低置信度条目。
 
@@ -246,6 +296,7 @@ def cleanup_stale_entries(max_age_days: int = 90, min_confidence: float = 0.3) -
     return stats
 
 
+@_atomic_operation("maybe_cleanup")
 def maybe_cleanup(threshold: int = 500) -> dict:
     """如果知识库条目数超过阈值，自动执行清理。
 
@@ -261,6 +312,7 @@ def maybe_cleanup(threshold: int = 500) -> dict:
     return {"keywords_removed": 0, "sources_removed": 0}
 
 
+@_atomic_operation("get_knowledge_stats")
 def get_knowledge_stats() -> dict:
     """获取知识库统计信息。"""
     data = _load()
@@ -302,6 +354,7 @@ def get_knowledge_stats() -> dict:
 # ────────── CRUD ──────────
 
 
+@_atomic_operation("list_keywords")
 def list_keywords(search: str = "", theme: str = "", sort: str = "confidence",
                   page: int = 1, per_page: int = 20) -> dict:
     """分页列出关键词，支持搜索、按主题筛选、排序。
@@ -349,6 +402,7 @@ def list_keywords(search: str = "", theme: str = "", sort: str = "confidence",
     }
 
 
+@_atomic_operation("update_keyword")
 def update_keyword(keyword: str, theme: str = None, tags: list[str] = None) -> bool:
     """修改已有关键词的主题和/或标签。返回是否成功。"""
     with _knowledge_lock:
@@ -365,6 +419,7 @@ def update_keyword(keyword: str, theme: str = None, tags: list[str] = None) -> b
         return True
 
 
+@_atomic_operation("delete_keyword")
 def delete_keyword(keyword: str) -> bool:
     """删除指定关键词。返回是否成功。"""
     with _knowledge_lock:

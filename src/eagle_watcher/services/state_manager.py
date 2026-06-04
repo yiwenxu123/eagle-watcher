@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,28 @@ _TRIM_KEEP_COUNT = 500
 
 DATA_DIR = Path.home() / ".eagle-watcher"
 STATE_PATH = DATA_DIR / "state.json"
+
+# 文件 stat 超时时间（秒）
+_STAT_TIMEOUT = 2
+
+
+def _stat_with_timeout(file_path: str, timeout: float = _STAT_TIMEOUT) -> Optional[os.stat_result]:
+    """带超时的文件 stat 操作，避免文件系统挂起导致死锁"""
+    import concurrent.futures
+
+    def _do_stat():
+        try:
+            return Path(file_path).stat()
+        except OSError:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_do_stat)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            _LOG.warning("文件 stat 超时: %s", file_path)
+            return None
 
 
 class StateManager:
@@ -146,13 +169,14 @@ class StateManager:
 
     def is_file_processed(self, file_path: str) -> bool:
         """只读检查文件是否已处理，不修改状态。"""
+        # 先在锁外获取文件信息，避免文件系统挂起导致死锁
+        st = _stat_with_timeout(file_path)
+        if st is None:
+            return False
+
+        key = f"{st.st_ino}:{st.st_size}"
         with self._lock:
             processed = set(self._state.get("processed_files", []))
-            try:
-                st = Path(file_path).stat()
-                key = f"{st.st_ino}:{st.st_size}"
-            except OSError:
-                return False
             return key in processed
 
     def set_processed_files(self, files: set[str]):
@@ -167,13 +191,15 @@ class StateManager:
         返回 True 表示该文件首次被标记（即需要处理），
         返回 False 表示该文件已被标记过（跳过处理）。
         """
+        # 先在锁外获取文件信息，避免文件系统挂起导致死锁
+        st = _stat_with_timeout(file_path)
+        if st is None:
+            return True  # 无法读取文件信息，返回 True 让调用方重试
+
+        key = f"{st.st_ino}:{st.st_size}"
+
         with self._lock:
             processed = set(self._state.get("processed_files", []))
-            try:
-                st = Path(file_path).stat()
-                key = f"{st.st_ino}:{st.st_size}"
-            except OSError:
-                return True  # 无法读取文件信息，返回 True 让调用方重试
             if key in processed:
                 return False  # 已处理过
             processed.add(key)

@@ -12,8 +12,11 @@ import time
 import hashlib
 import base64
 import logging
+import threading
+import fcntl
 from pathlib import Path
 from typing import Optional
+from collections import OrderedDict
 
 from dashscope import MultiModalConversation
 
@@ -25,6 +28,68 @@ _LOG = logging.getLogger("ai_tagger")
 
 # 缓存目录
 CACHE_DIR = Path.home() / ".eagle-watcher" / "cache"
+
+# 内存缓存配置
+MEMORY_CACHE_MAX_SIZE = 100
+
+# 内存缓存（LRU）
+_memory_cache: OrderedDict[str, dict] = OrderedDict()
+_memory_cache_lock = threading.Lock()
+
+
+def _get_memory_cache(image_hash: str) -> Optional[dict]:
+    """从内存缓存获取结果"""
+    with _memory_cache_lock:
+        if image_hash in _memory_cache:
+            # 移动到末尾（LRU）
+            _memory_cache.move_to_end(image_hash)
+            return _memory_cache[image_hash]
+    return None
+
+
+def _set_memory_cache(image_hash: str, result: dict):
+    """设置内存缓存"""
+    with _memory_cache_lock:
+        if image_hash in _memory_cache:
+            # 更新现有条目
+            _memory_cache[image_hash] = result
+            _memory_cache.move_to_end(image_hash)
+        else:
+            # 添加新条目
+            _memory_cache[image_hash] = result
+            # 如果超过最大大小，删除最旧的条目
+            while len(_memory_cache) > MEMORY_CACHE_MAX_SIZE:
+                _memory_cache.popitem(last=False)
+
+
+def _acquire_cache_lock(timeout: float = 5):
+    """获取缓存文件锁"""
+    # 确保缓存目录存在
+    cache_dir = CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # 使用缓存目录下的锁文件
+    lock_path = cache_dir / ".cache.lock"
+    lock_file = open(lock_path, "w")
+    start_time = time.time()
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock_file
+        except (IOError, OSError):
+            if time.time() - start_time >= timeout:
+                lock_file.close()
+                raise TimeoutError(f"获取缓存锁超时 ({timeout}s)")
+            time.sleep(0.01)
+
+
+def _release_cache_lock(lock_file):
+    """释放缓存文件锁"""
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+    except Exception:
+        pass
 
 
 def _get_api_key() -> Optional[str]:
@@ -59,10 +124,20 @@ CACHE_MAX_AGE_DAYS = 30
 
 
 def _load_cache(image_hash: str) -> Optional[dict]:
-    """从缓存加载分析结果（超过 30 天自动过期）"""
+    """从缓存加载分析结果（超过 30 天自动过期）
+
+    优先从内存缓存读取，失败则从文件缓存读取
+    """
     if not image_hash:
         return None
 
+    # 优先从内存缓存读取
+    cached = _get_memory_cache(image_hash)
+    if cached:
+        _LOG.debug("从内存缓存读取: %s", image_hash[:8])
+        return cached
+
+    # 从文件缓存读取
     cache_file = CACHE_DIR / f"{image_hash}.json"
     if not cache_file.exists():
         return None
@@ -78,26 +153,46 @@ def _load_cache(image_hash: str) -> Optional[dict]:
         pass
 
     try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+        lock_file = _acquire_cache_lock()
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                result = json.load(f)
+                # 加载到内存缓存
+                _set_memory_cache(image_hash, result)
+                return result
+        finally:
+            _release_cache_lock(lock_file)
+    except TimeoutError:
+        _LOG.warning("读取缓存超时: %s", image_hash[:8])
+        return None
     except (json.JSONDecodeError, OSError) as e:
         _LOG.warning("AI 缓存读取失败: %s", e)
         return None
 
 
 def _save_cache(image_hash: str, result: dict):
-    """保存分析结果到缓存"""
+    """保存分析结果到缓存（同时更新内存缓存和文件缓存）"""
     if not image_hash:
         return
 
+    # 更新内存缓存
+    _set_memory_cache(image_hash, result)
+
+    # 更新文件缓存
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"{image_hash}.json"
 
     try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+        lock_file = _acquire_cache_lock()
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+        finally:
+            _release_cache_lock(lock_file)
+    except TimeoutError:
+        _LOG.warning("保存缓存超时: %s", image_hash[:8])
     except Exception as e:
-        _LOG.warning(f"保存缓存失败：{e}")
+        _LOG.warning("保存缓存失败：%s", e)
 
 
 def _encode_image(file_path: str) -> Optional[str]:
@@ -189,7 +284,7 @@ def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
     if use_cache:
         cached = _load_cache(image_hash)
         if cached:
-            _LOG.info(f"使用缓存结果：{Path(file_path).name}")
+            _LOG.info("使用缓存结果：%s", Path(file_path).name)
             return cached
 
     img_data = _encode_image(file_path)
@@ -200,7 +295,7 @@ def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
-            _LOG.info(f"AI 分析尝试 {attempt + 1}/{MAX_RETRIES}：{Path(file_path).name}")
+            _LOG.info("AI 分析尝试 %d/%d：%s", attempt + 1, MAX_RETRIES, Path(file_path).name)
             text = _call_qwen_vl(img_data)
             if text:
                 result = _parse_response(text, file_path)
@@ -210,11 +305,11 @@ def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
                 return result
         except Exception as e:
             last_error = e
-            _LOG.warning(f"AI 分析失败（尝试 {attempt + 1}）：{e}")
+            _LOG.warning("AI 分析失败（尝试 %d）：%s", attempt + 1, e)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避
 
-    _LOG.error(f"AI 分析最终失败：{last_error}")
+    _LOG.error("AI 分析最终失败：%s", last_error)
     return None
 
 

@@ -22,6 +22,7 @@ venv/
 
 # Config (user-specific) — 不跟踪，用户自行复制 config.yaml.example
 config.yaml
+themes.yaml
 
 # AI development workflow (internal tools)
 .spec-workflow/
@@ -37,5 +38,6 @@ htmlcov/
 # Agent workspace
 .sisyphus/
 
-# External reference
+# External reference / development docs
 chatgpt分析与优化建议.md
+*开发方案.md

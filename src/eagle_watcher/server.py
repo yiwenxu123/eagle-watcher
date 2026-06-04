@@ -92,6 +92,8 @@ _IDEMPOTENCY_MAX_KEYS = 200  # 防止内存泄漏的硬上限
 # 面板服务器 session token：启动时生成，注入前端页面，验证 API 请求
 _panel_session_token: str = ""
 _panel_token_initialized = False
+_panel_token_created_at: float = 0  # Token 创建时间戳
+_PANEL_TOKEN_TTL = 24 * 60 * 60  # Token 有效期（24 小时）
 
 
 def _get_watch_dirs_from_config() -> list[dict]:
@@ -127,10 +129,19 @@ def _get_watch_dirs_from_config() -> list[dict]:
 
 
 def _ensure_panel_token():
-    global _panel_session_token, _panel_token_initialized
-    if not _panel_token_initialized:
+    """确保 Token 有效，过期则自动生成新的"""
+    global _panel_session_token, _panel_token_initialized, _panel_token_created_at
+
+    current_time = time.time()
+
+    # 检查是否需要生成新 Token
+    if (not _panel_token_initialized or
+            current_time - _panel_token_created_at > _PANEL_TOKEN_TTL):
         _panel_session_token = secrets.token_urlsafe(32)
         _panel_token_initialized = True
+        _panel_token_created_at = current_time
+        _LOG.info("面板 Token 已更新")
+
     return _panel_session_token
 
 
@@ -207,7 +218,27 @@ class BaseHandler(BaseHTTPRequestHandler):
 # ══════════════════════════════════════════════════════════════
 
 class RemoteHandler(BaseHandler):
-    """远程 Agent API：GET /ping, GET /status, POST /import"""
+    """远程 Agent API：GET /ping, GET /status, POST /import
+
+    认证方式（可选）：
+      在 config.yaml 中设置 server.api_key，请求时通过 X-API-Key header 传入。
+      未配置 api_key 时向后兼容，允许所有请求。
+      /ping 端点始终开放（无需认证）。
+    """
+
+    def _check_api_key(self) -> bool:
+        """验证 X-API-Key header 与配置中的 server.api_key 匹配。
+        如果未配置 api_key，则允许所有请求（向后兼容）。
+        """
+        cfg = load_config()
+        expected = cfg.get("server", {}).get("api_key", "")
+        if not expected:
+            return True  # 未配置 api_key：向后兼容，允许所有请求
+        actual = self.headers.get("X-API-Key", "")
+        if actual == expected:
+            return True
+        self._send_json(401, {"status": "error", "message": "invalid or missing API key"})
+        return False
 
     def _get_eagle(self) -> Optional[EagleAPI]:
         """创建 EagleAPI（使用 status/message 错误格式，保持向后兼容）。"""
@@ -222,13 +253,18 @@ class RemoteHandler(BaseHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
+        # /ping 不验证 API Key（健康检查端点）
         if path == "/ping":
             cfg = load_config()
             eagle = create_eagle_api(cfg)
             online = eagle.ping()
             self._send_json(200, {"status": "ok", "eagle_online": online})
 
-        elif path == "/status":
+        # 其他 GET 端点需要 API Key 认证
+        if not self._check_api_key():
+            return
+
+        if path == "/status":
             cfg = load_config()
             eagle = create_eagle_api(cfg)
             from eagle_watcher.config import get_current_project, get_project_names
@@ -252,6 +288,9 @@ class RemoteHandler(BaseHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
+
+        if not self._check_api_key():
+            return
 
         if path != "/import":
             self._send_json(404, {"status": "error", "message": "not found"})
@@ -531,11 +570,19 @@ class PanelHandler(BaseHandler):
 
         create_category(name, folder_id=folder_id)
         _invalidate_status_cache()
-        self._send_json(200, {
+
+        eagle_ok = api is not None
+        response = {
             "ok": True,
             "name": name,
-            "eagle_folder_created": api is not None,
-        })
+            "eagle_folder_created": eagle_ok,
+        }
+        if not eagle_ok:
+            response["warning"] = (
+                f"分类「{name}」已创建，但 Eagle 未运行，无法同步创建 Eagle 文件夹。"
+                "Eagle 上线后需手动创建同名文件夹以保持同步。"
+            )
+        self._send_json(200, response)
 
     def _handle_delete_category(self, body: dict):
         name = body.get("name", "").strip()
@@ -1120,6 +1167,10 @@ class PanelHandler(BaseHandler):
                 self._handle_knowledge_list()
             elif path == "/api/export/status":
                 self._handle_export_status()
+            elif path == "/api/token/refresh":
+                # 获取新的 Token（前端可用于刷新）
+                new_token = _ensure_panel_token()
+                self._send_json(200, {"token": new_token})
             else:
                 self._send_json(404, {"error": "not found"})
 
@@ -1211,8 +1262,15 @@ def start_remote_server(host: str = HOST, port: int = REMOTE_PORT):
     server = HTTPServer((host, port), RemoteHandler)
     print(f"🌐  HTTP Server 已启动：http://{host}:{port}")
     print(f"    POST /import  — 远程 Agent 导入素材")
-    print(f"    GET  /ping    — 健康检查")
+    print(f"    GET  /ping    — 健康检查（无需认证）")
     print(f"    GET  /status  — 状态查询")
+    # 检查 API Key 是否已配置
+    _cfg = load_config()
+    _server_key = _cfg.get("server", {}).get("api_key", "")
+    if _server_key:
+        print(f"    🔑 API Key 认证已启用")
+    else:
+        print(f"    ⚠️  API Key 未配置（请求无需认证）")
     print(f"    按 Ctrl+C 停止\n")
     try:
         server.serve_forever()

@@ -12,6 +12,9 @@ from eagle_watcher.pyui.panel import apply_pending_pinned, apply_pending_folder_
 
 _LOG = logging.getLogger("menu")
 
+# 菜单更新间隔（秒）
+MENU_UPDATE_INTERVAL = 30  # 从 5 秒增加到 30 秒
+
 
 class EagleWatcherMenu(rumps.App):
 
@@ -28,17 +31,40 @@ class EagleWatcherMenu(rumps.App):
         self.quit_btn = rumps.MenuItem("🚪 退出", callback=lambda _: rumps.quit_application())
         self.menu = [self.open_btn, None, self._watch_header, self.quit_btn]
 
+        # 缓存状态，避免频繁更新
+        self._last_title = ""
+        self._last_watch_items_hash = ""
+        self._last_update_time = 0
+
         # 在 __init__ 中重建一次菜单
         self._update_watch_items()
 
         self._start_http()
-        rumps.Timer(self._tick, 5).start()
+        rumps.Timer(self._tick, MENU_UPDATE_INTERVAL).start()
 
     @staticmethod
     def _build_title() -> str:
         cur = get_current_project()
         label = cur or "自动匹配"
         return (label[:19] + "…") if len(label) > 20 else label
+
+    def _get_watch_items_hash(self) -> str:
+        """计算监控目录列表的哈希值，用于检测变化"""
+        try:
+            cfg = load_config()
+            items = []
+            downloads = cfg.get("paths", {}).get("downloads", "")
+            if downloads:
+                expanded = os.path.expanduser(downloads)
+                items.append(f"{Path(expanded).is_dir()}:{expanded}")
+            extra = cfg.get("paths", {}).get("extra_watch_dirs", [])
+            if isinstance(extra, list):
+                for d in extra:
+                    expanded = os.path.expanduser(d)
+                    items.append(f"{Path(expanded).is_dir()}:{expanded}")
+            return "|".join(items)
+        except Exception:
+            return ""
 
     def _update_watch_items(self):
         try:
@@ -85,21 +111,34 @@ class EagleWatcherMenu(rumps.App):
         self._http_thread.start()
 
     def _tick(self, _):
+        current_time = time.time()
+
         try:
-            self.title = self._build_title()
+            # 标题更新（每次都检查，但只在变化时更新）
+            new_title = self._build_title()
+            if new_title != self._last_title:
+                self.title = new_title
+                self._last_title = new_title
         except Exception as e:
             _LOG.error("_tick title 更新失败: %s", e)
+
         try:
             apply_pending_pinned()
         except Exception as e:
             _LOG.error("_tick pinned 失败: %s", e)
+
         try:
             apply_pending_folder_picker()
         except Exception as e:
             _LOG.error("_tick picker 失败: %s", e)
+
+        # 监控目录菜单更新（使用哈希检测变化，避免频繁重建）
         try:
-            if int(time.time()) % 60 < 5:
+            current_hash = self._get_watch_items_hash()
+            if current_hash != self._last_watch_items_hash:
                 self._update_watch_items()
+                self._last_watch_items_hash = current_hash
+                self._last_update_time = current_time
         except Exception as e:
             _LOG.error("_tick watch items 失败: %s", e)
 
