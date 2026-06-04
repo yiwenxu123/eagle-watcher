@@ -80,6 +80,16 @@ python -m pytest tests/test_analyzer.py -v  # 单个模块
 
 **注意**：所有 POST 需要 `X-Session-Token` header（从 `<meta name="session-token">` 获取）。GET 不需要。
 
+### 远程 API（端口 9800）
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | `/ping` | ❌ | 健康检查（无需认证） |
+| GET | `/status` | ✅ | 状态查询，需 X-API-Key |
+| POST | `/import` | ✅ | 导入素材，需 X-API-Key |
+
+**认证**：如果 `config.yaml` 中设置了 `server.api_key`，远程 API 请求需通过 `X-API-Key` header 传入。未设置时向后兼容（无认证）。
+
 ## 数据目录 `~/.eagle-watcher/`
 
 | 文件 | 说明 |

@@ -10,7 +10,8 @@ A macOS menubar app that watches your Downloads folder and automatically sorts d
 - **🧠 AI vision** — When filenames are too vague (screenshot_2025-01-01.png), it uses Qwen-VL to analyze the actual image content
 - **🗂️ Inbox management** — A floating HUD panel to review, tag, and organize unsorted assets
 - **🏷️ Theme-based workflows** — Switch between projects. Files matching your active theme are prioritized
-- **🌐 HTTP API** — Remote AI agents (Hermes, OpenClaw, etc.) can import assets via SSH tunnel
+- **🌐 HTTP API** — Remote AI agents (Hermes, OpenClaw, etc.) can import assets via SSH tunnel, with optional API key authentication
+- **📤 Export workspace** — Automatically sync imported assets to a local folder for use in video editors or other tools
 - **⌨️ CLI** — Quick imports from terminal
 
 ## Requirements
@@ -32,6 +33,9 @@ pip install 'eagle-watcher[full]'
 #    Open Eagle → Preferences → Developer Options → copy your API Token
 cp config.yaml.example ~/.eagle-watcher/config.yaml
 #    Then edit ~/.eagle-watcher/config.yaml and paste your token
+#
+#    Optional: set server.api_key to protect the HTTP API:
+#    echo 'server:\n  api_key: "your-secret-key"' >> ~/.eagle-watcher/config.yaml
 
 # 4. Run
 eagle-watcher
@@ -79,40 +83,47 @@ eagle-server
 curl http://localhost:9800/ping
 curl http://localhost:9800/status
 
+# Import with API key auth (if configured in config.yaml)
 curl -X POST http://localhost:9800/import \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-secret-key" \
   -d '{"file_url": "https://example.com/img.jpg", "project": "Qin Dynasty"}'
 ```
+
+> **Security:** If `server.api_key` is set in `~/.eagle-watcher/config.yaml`, all endpoints except `/ping` require the `X-API-Key` header. Without an API key, the server only accepts connections from localhost (recommended via SSH tunnel for remote access).
 
 For remote agents: `ssh -L 9800:localhost:9800 your-mac`
 
 ### API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/ping` | Health check |
-| `GET` | `/status` | Current project, folders, stats |
-| `POST` | `/import` | Import asset from URL or path |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/ping` | ❌ | Health check (no auth required) |
+| `GET` | `/status` | ✅ | Current project, folders, stats |
+| `POST` | `/import` | ✅ | Import asset from URL or path |
 
 ## Architecture
 
 ```
 eagle-watcher/
-├── main.py              # Entry point: watcher thread + menubar
-├── cli.py               # CLI import tool
-├── server.py            # HTTP API server (standalone)
-├── analyzer.py          # Filename analysis + theme matching
-├── knowledge.py         # Auto-learning keyword→theme mappings
-├── eagle_api.py         # Eagle HTTP API client (urllib, not httpx)
-├── config.py            # YAML config management
-├── services/
-│   ├── state_manager.py # Thread-safe runtime state
-│   ├── file_watcher.py  # FSEvents → polling fallback
-│   └── sort_service.py  # Inbox sorting logic
-└── pyui/
-    ├── server.py        # HUD panel HTTP server
-    ├── panel.py         # Native NSPanel + WKWebView
-    └── panel.html       # Frontend UI (Tailwind)
+└── src/eagle_watcher/
+    ├── main.py              # Entry point: watcher thread + menubar
+    ├── cli.py               # CLI import tool
+    ├── server.py            # HTTP API server (standalone) + Panel API
+    ├── analyzer.py          # Filename analysis + theme matching
+    ├── knowledge.py         # Auto-learning keyword→theme mappings
+    ├── eagle_api.py         # Eagle HTTP API client (urllib, not httpx)
+    ├── config.py            # YAML config management
+    ├── ai_tagger.py         # AI vision (Qwen-VL) with caching
+    ├── exporter.py          # Export workspace with LRU cleanup
+    ├── services/
+    │   ├── state_manager.py # Thread-safe runtime state
+    │   ├── file_watcher.py  # FSEvents → polling fallback
+    │   └── sort_service.py  # Inbox sorting logic
+    └── pyui/
+        ├── server.py        # HUD panel HTTP server
+        ├── panel.py         # Native NSPanel + WKWebView
+        └── panel.html       # Frontend UI (Tailwind)
 ```
 
 ## Contributing
