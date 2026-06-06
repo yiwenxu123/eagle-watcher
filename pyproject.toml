@@ -62,5 +62,8 @@ eagle-server = "eagle_watcher.server:start_server"
 where = ["src"]
 include = ["eagle_watcher*"]
 
+[tool.setuptools.package-data]
+eagle_watcher = ["pyui/icon.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

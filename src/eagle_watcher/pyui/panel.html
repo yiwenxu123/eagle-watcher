@@ -84,26 +84,52 @@
   .help-section summary:hover { color: #1d1d1f; }
   .help-content { font-size: 11px; line-height: 1.6; color: #6b7280; padding: 4px 0 8px; }
   .help-content code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 10px; color: #374151; }
+  /* ── 图标 ── */
+  .icon { width: 16px; height: 16px; flex-shrink: 0; vertical-align: middle; }
+  .icon-sm { width: 14px; height: 14px; }
+  .icon-md { width: 18px; height: 18px; }
+  .icon-lg { width: 22px; height: 22px; }
 </style>
 </head>
 <body class="bg-apple-bg text-apple-text font-sans text-sm leading-relaxed select-none">
+  <!-- SVG icon sprite（10 个最常用图标，1.5px 描边） -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8m-7 1l7 7 7-7M5 21h14"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+  </svg>
   <div id="app" class="p-4 pt-7 space-y-3 max-h-[620px] overflow-y-auto scrollbar-thin fade-in">
 
     <!-- 头部 -->
     <div class="flex items-center justify-between mb-1">
-      <h1 class="text-base font-semibold tracking-tight">🖼 素材管家</h1>
+      <h1 class="text-base font-semibold tracking-tight flex items-center gap-1.5">
+        <svg class="icon icon-md"><use href="#i-image"/></svg>
+        素材管家
+      </h1>
       <div class="flex items-center gap-1.5">
         <span id="ai-badge" class="hidden text-xs px-2 py-0.5 rounded-full">AI: --</span>
-        <button onclick="clearAiCache()" class="emoji-btn text-apple-muted hover:text-apple-red transition-colors" title="清除 AI 视觉缓存">🗑</button>
+        <button onclick="clearAiCache()" class="emoji-btn text-apple-muted hover:text-apple-red transition-colors" title="清除 AI 视觉缓存">
+          <svg class="icon"><use href="#i-trash"/></svg>
+        </button>
         <span id="eagle-badge" class="hidden text-xs px-2 py-0.5 rounded-full">Eagle --</span>
-        <button id="pin-btn" onclick="togglePin()" class="emoji-btn text-apple-muted hover:text-apple-blue transition-colors" title="置顶面板">📌</button>
+        <button id="pin-btn" onclick="togglePin()" class="emoji-btn text-apple-muted hover:text-apple-blue transition-colors" title="置顶面板">
+          <svg class="icon"><use href="#i-pin"/></svg>
+        </button>
       </div>
     </div>
 
     <!-- 配置引导横幅 -->
     <div id="setup-banner" class="hidden bg-apple-card rounded-apple p-3 shadow-sm border border-red-300 fade-in">
       <div class="flex items-center gap-2 mb-1">
-        <span id="setup-banner-title" class="text-apple-red font-semibold text-sm">⚠️ 首次使用配置</span>
+        <svg class="icon icon-md text-apple-red"><use href="#i-alert"/></svg>
+        <span id="setup-banner-title" class="text-apple-red font-semibold text-sm">首次使用配置</span>
       </div>
       <p id="setup-banner-desc" class="text-[11px] text-apple-text/80 leading-relaxed mb-2">
         素材管家需要连接 Eagle 才能自动导入素材。
@@ -122,15 +148,18 @@
       </div>
       <div id="token-status" class="hidden text-[11px] mb-2"></div>
       <div class="flex gap-2">
-        <button onclick="openEagle()" class="btn-secondary text-xs flex-1">📂 打开 Eagle</button>
-        <button onclick="refresh()" class="btn-secondary text-xs flex-1">🔄 重新检测</button>
+        <button onclick="openEagle()" class="btn-secondary text-xs flex-1 flex items-center justify-center gap-1">
+          <svg class="icon icon-sm"><use href="#i-folder"/></svg>
+          打开 Eagle
+        </button>
+        <button onclick="refresh()" class="btn-secondary text-xs flex-1">重新检测</button>
       </div>
     </div>
 
     <!-- 权限警告横幅 -->
     <div id="permission-banner" class="hidden bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
       <div class="flex items-start gap-2">
-        <span class="text-red-500 text-sm">⚠️</span>
+        <svg class="icon icon-md text-red-500 mt-0.5"><use href="#i-alert"/></svg>
         <div class="text-xs text-red-700">
           <div class="font-medium mb-1">文件夹权限不足</div>
           <div class="mb-2">监控目录 <span class="perm-path font-mono"></span> 无访问权限，素材将不会被自动检测。</div>
@@ -158,7 +187,10 @@
     <!-- 监控目录列表 -->
     <div id="watch-dirs-section" class="hidden bg-apple-card rounded-apple shadow-sm border border-apple-border px-3 py-2">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[10px] text-apple-muted uppercase tracking-wide">📂 监控目录</span>
+        <span class="text-[10px] text-apple-muted uppercase tracking-wide flex items-center gap-1">
+          <svg class="icon icon-sm"><use href="#i-folder"/></svg>
+          监控目录
+        </span>
       </div>
       <div id="watch-dirs-list" class="space-y-0.5"></div>
       <div id="scan-status" class="hidden text-[10px] text-apple-muted mt-1 truncate"></div>
@@ -170,7 +202,7 @@
       <!-- 顶部：主题设置 -->
       <div class="p-3 space-y-2">
         <div class="flex items-center justify-between">
-          <h2 class="font-medium text-sm">🧠 教AI认识新素材</h2>
+          <h2 class="font-medium text-sm">教AI认识新素材</h2>
           <span class="text-[10px] text-apple-muted" id="kb-info"></span>
         </div>
         <p class="text-[11px] text-apple-muted leading-relaxed">
@@ -188,6 +220,16 @@
         </div>
       </div>
 
+      <!-- 媒体类型过滤器 -->
+      <div class="border-t border-apple-border px-3 pt-2 pb-1">
+        <div class="flex bg-gray-100 rounded-full text-[10px] w-fit" id="inbox-media-filter">
+          <button onclick="filterInboxMedia('all')" id="media-filter-all" class="px-2.5 py-0.5 rounded-full bg-white shadow-sm font-medium transition-all">全部</button>
+          <button onclick="filterInboxMedia('image')" id="media-filter-image" class="px-2.5 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all">图片</button>
+          <button onclick="filterInboxMedia('video')" id="media-filter-video" class="px-2.5 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all">视频</button>
+          <button onclick="filterInboxMedia('media')" id="media-filter-media" class="px-2.5 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all">多媒体</button>
+        </div>
+      </div>
+
       <!-- 待分类素材区 -->
       <div class="border-t border-apple-border">
         <div class="p-3 space-y-2 max-h-56 overflow-y-auto scrollbar-thin" id="inbox-content">
@@ -200,8 +242,11 @@
       <!-- 底部操作栏 -->
       <div class="border-t border-apple-border p-2.5">
         <div class="flex gap-2">
-          <button onclick="openEagle()" class="flex-1 text-center bg-white border border-apple-border rounded-lg py-2 hover:bg-gray-50 transition-colors text-xs font-medium">📂 打开 Eagle</button>
-          <button onclick="refresh(); setTimeout(() => loadInbox(false), 200)" class="flex-1 text-center bg-apple-blue text-white rounded-lg py-2 hover:opacity-90 transition-opacity text-xs font-medium">🔄 加载待学习素材</button>
+          <button onclick="openEagle()" class="flex-1 text-center bg-white border border-apple-border rounded-lg py-2 hover:bg-gray-50 transition-colors text-xs font-medium flex items-center justify-center gap-1">
+            <svg class="icon icon-sm"><use href="#i-folder"/></svg>
+            打开 Eagle
+          </button>
+          <button onclick="refresh(); setTimeout(() => loadInbox(false), 200)" class="flex-1 text-center bg-apple-blue text-white rounded-lg py-2 hover:opacity-90 transition-opacity text-xs font-medium">加载待学习素材</button>
         </div>
       </div>
     </div>
@@ -210,7 +255,10 @@
     <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden">
       <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors
                      flex items-center justify-between">
-        <span>⚙️ 文件夹 & 主题管理</span>
+        <span class="flex items-center gap-1.5">
+          <svg class="icon"><use href="#i-settings"/></svg>
+          文件夹 & 主题管理
+        </span>
       </summary>
       <div class="p-3 border-t border-apple-border space-y-3">
         <div class="flex gap-2">
@@ -237,8 +285,9 @@
     <!-- 导出工作区 -->
     <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
              ontoggle="if(this.open) loadExportStatus()">
-      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors">
-        📤 导出工作区
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors flex items-center gap-1.5">
+        <svg class="icon"><use href="#i-upload"/></svg>
+        导出工作区
       </summary>
       <div class="p-3 border-t border-apple-border space-y-2">
         <div class="flex items-center gap-2">
@@ -251,7 +300,9 @@
           <input id="export-dir" placeholder="导出目录路径（如 ~/Design/剪映素材/）"
                  class="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-apple-border
                         focus:outline-none focus:ring-1 focus:ring-apple-blue/30 bg-white">
-          <button onclick="pasteExportDir()" class="btn-secondary text-xs whitespace-nowrap">📋</button>
+          <button onclick="pasteExportDir()" class="btn-secondary text-xs whitespace-nowrap flex items-center gap-1" title="从剪贴板粘贴">
+            <svg class="icon icon-sm"><use href="#i-paste"/></svg>
+          </button>
           <button onclick="saveExportConfig()" class="btn-primary text-xs whitespace-nowrap">保存</button>
         </div>
         <div class="flex items-center gap-2">
@@ -270,8 +321,14 @@
         </div>
         <div id="export-status" class="text-[10px] text-apple-muted"></div>
         <div class="flex gap-2">
-          <button onclick="openExportDir()" class="btn-secondary text-xs flex-1">📂 打开目录</button>
-          <button onclick="clearExportDir()" class="btn-secondary text-xs flex-1 text-apple-red">🗑 清空工作区</button>
+          <button onclick="openExportDir()" class="btn-secondary text-xs flex-1 flex items-center justify-center gap-1">
+            <svg class="icon icon-sm"><use href="#i-folder"/></svg>
+            打开目录
+          </button>
+          <button onclick="clearExportDir()" class="btn-secondary text-xs flex-1 text-apple-red flex items-center justify-center gap-1">
+            <svg class="icon icon-sm"><use href="#i-trash"/></svg>
+            清空工作区
+          </button>
         </div>
         <div class="border-t border-apple-border pt-2 space-y-1.5">
           <label class="text-xs text-apple-muted">批量导出已有素材：</label>
@@ -291,8 +348,9 @@
     <!-- 知识库管理 -->
     <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
              ontoggle="if(this.open) loadKnowledge()">
-      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors">
-        🧠 知识库管理
+      <summary class="p-3 text-sm font-medium cursor-pointer hover:bg-gray-50 transition-colors flex items-center gap-1.5">
+        <svg class="icon"><use href="#i-book"/></svg>
+        知识库管理
       </summary>
       <div class="border-t border-apple-border">
         <!-- 统计摘要 -->
@@ -320,7 +378,10 @@
     <details class="bg-apple-card rounded-apple shadow-sm border border-apple-border overflow-hidden"
              ontoggle="if(this.open) loadHistory()">
       <summary class="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors">
-        <span class="text-sm font-medium">📋 操作历史</span>
+        <span class="text-sm font-medium flex items-center gap-1.5">
+          <svg class="icon"><use href="#i-list"/></svg>
+          操作历史
+        </span>
         <div class="flex items-center gap-2" onclick="event.stopPropagation()">
           <div class="flex bg-gray-100 rounded-full text-[10px]">
             <button onclick="filterHistory('all')" id="hist-filter-all" class="px-2 py-0.5 rounded-full bg-white shadow-sm font-medium transition-all">全部</button>
@@ -341,7 +402,10 @@
   <!-- 帮助区 -->
   <div class="help-section bg-apple-card rounded-apple shadow-sm border border-apple-border px-3 py-1">
     <details>
-      <summary class="select-none flex items-center gap-1">📖 帮助</summary>
+      <summary class="select-none flex items-center gap-1.5">
+        <svg class="icon icon-sm"><use href="#i-book"/></svg>
+        帮助
+      </summary>
       <div class="help-content space-y-1.5">
         <p><strong>监控目录</strong></p>
         <p>• <strong>长期目录</strong>——在 <code>config.yaml</code> 中配置，不可从面板移除</p>
@@ -900,6 +964,22 @@ function escapeJsString(str) {
 
 let _inboxOffset = 0;
 const _inboxLimit = 50;
+let _inboxMediaType = 'all';
+
+/** 切换通用箱媒体类型过滤 */
+function filterInboxMedia(type) {
+  _inboxMediaType = type;
+  // 更新按钮高亮状态
+  const filterEl = $('inbox-media-filter');
+  if (!filterEl) return;
+  filterEl.querySelectorAll('button').forEach(btn => {
+    const isActive = btn.id === `media-filter-${type}`;
+    btn.className = isActive
+      ? 'px-2.5 py-0.5 rounded-full bg-white shadow-sm font-medium transition-all'
+      : 'px-2.5 py-0.5 rounded-full text-apple-muted hover:text-apple-text transition-all';
+  });
+  loadInbox(false);
+}
 
 async function loadInbox(append) {
   const container = $('inbox-content');
@@ -908,7 +988,7 @@ async function loadInbox(append) {
     if (!append) {
       container.innerHTML = '<div class="flex items-center justify-center py-6"><div class="spinner"></div><span class="ml-2 text-xs text-apple-muted">加载中…</span></div>';
     }
-    const data = await api('GET', `/api/inbox?limit=${_inboxLimit}&offset=${_inboxOffset}`);
+    const data = await api('GET', `/api/inbox?limit=${_inboxLimit}&offset=${_inboxOffset}&media_type=${_inboxMediaType}`);
     const items = data.items || [];
 
     if (items.length === 0 && !append) {
