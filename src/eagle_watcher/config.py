@@ -10,6 +10,13 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from eagle_watcher.services.state_manager import get_state_manager
+from eagle_watcher.exceptions import (
+    ConfigError,
+    ConfigLoadError,
+    ConfigSaveError,
+    ConfigValidationError,
+    wrap_exception,
+)
 
 _LOG = logging.getLogger("config")
 _themes_lock = threading.Lock()
@@ -33,8 +40,11 @@ def load_config() -> dict:
         try:
             with open(CONFIG_PATH) as f:
                 return yaml.safe_load(f) or _default_config()
-        except Exception:
-            _LOG.warning("config.yaml 读取失败，使用默认配置")
+        except (yaml.YAMLError, OSError) as e:
+            _LOG.warning("config.yaml 读取失败，使用默认配置: %s", e)
+            return _default_config()
+        except Exception as e:
+            _LOG.warning("config.yaml 读取失败，使用默认配置: %s", e)
             return _default_config()
 
 
@@ -83,12 +93,16 @@ def save_config(cfg: dict):
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, allow_unicode=True)
             os.replace(tmp_path, str(CONFIG_PATH))
-        except Exception:
+        except Exception as e:
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            raise
+            raise ConfigSaveError(
+                message="配置文件保存失败",
+                config_path=str(CONFIG_PATH),
+                original_error=e,
+            )
 
 
 # ────────── themes.yaml（主题列表）──────────
@@ -139,7 +153,11 @@ def save_themes(data: dict):
 
 
 def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
-    """验证配置文件，返回 (errors, warnings) 元组"""
+    """验证配置文件，返回 (errors, warnings) 元组
+
+    Raises:
+        ConfigValidationError: 当配置验证失败时抛出（包含错误和警告列表）
+    """
     errors: list[str] = []
     warnings: list[str] = []
 

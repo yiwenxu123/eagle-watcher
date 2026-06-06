@@ -15,11 +15,14 @@ _LOG = logging.getLogger("menu")
 # 菜单更新间隔（秒）
 MENU_UPDATE_INTERVAL = 30  # 从 5 秒增加到 30 秒
 
+# 菜单栏图标路径
+_MENU_ICON = str(Path(__file__).parent / "pyui" / "icon.png")
+
 
 class EagleWatcherMenu(rumps.App):
 
     def __init__(self):
-        super().__init__(self._build_title(), icon=None)
+        super().__init__(self._build_title(), icon=_MENU_ICON, template=True)
         self._panel = None
         self._http_thread = None
         self._watch_header_title = "📂 监控目录"

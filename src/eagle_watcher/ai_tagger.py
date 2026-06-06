@@ -20,6 +20,15 @@ from collections import OrderedDict
 
 from dashscope import MultiModalConversation
 
+from eagle_watcher.exceptions import (
+    AIAnalysisError,
+    AIModelError,
+    AICacheError,
+    AITimeoutError,
+    AIKeyError,
+    wrap_exception,
+)
+
 DEFAULT_MODEL = "qwen-vl-max"
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # 秒
@@ -127,6 +136,9 @@ def _load_cache(image_hash: str) -> Optional[dict]:
     """从缓存加载分析结果（超过 30 天自动过期）
 
     优先从内存缓存读取，失败则从文件缓存读取
+
+    Raises:
+        AICacheError: 缓存读取失败时抛出
     """
     if not image_hash:
         return None
@@ -149,8 +161,14 @@ def _load_cache(image_hash: str) -> Optional[dict]:
         if age_days > CACHE_MAX_AGE_DAYS:
             cache_file.unlink(missing_ok=True)
             return None
-    except OSError:
-        pass
+    except OSError as e:
+        _LOG.warning("检查缓存文件状态失败: %s", e)
+        raise AICacheError(
+            message="检查缓存文件状态失败",
+            cache_path=str(cache_file),
+            operation="check_expiry",
+            original_error=e,
+        )
 
     try:
         lock_file = _acquire_cache_lock()
@@ -162,16 +180,30 @@ def _load_cache(image_hash: str) -> Optional[dict]:
                 return result
         finally:
             _release_cache_lock(lock_file)
-    except TimeoutError:
+    except TimeoutError as e:
         _LOG.warning("读取缓存超时: %s", image_hash[:8])
-        return None
+        raise AICacheError(
+            message="读取缓存超时",
+            cache_path=str(cache_file),
+            operation="load",
+            original_error=e,
+        )
     except (json.JSONDecodeError, OSError) as e:
         _LOG.warning("AI 缓存读取失败: %s", e)
-        return None
+        raise AICacheError(
+            message="AI 缓存读取失败",
+            cache_path=str(cache_file),
+            operation="load",
+            original_error=e,
+        )
 
 
 def _save_cache(image_hash: str, result: dict):
-    """保存分析结果到缓存（同时更新内存缓存和文件缓存）"""
+    """保存分析结果到缓存（同时更新内存缓存和文件缓存）
+
+    Raises:
+        AICacheError: 缓存保存失败时抛出
+    """
     if not image_hash:
         return
 
@@ -189,10 +221,22 @@ def _save_cache(image_hash: str, result: dict):
                 json.dump(result, f, ensure_ascii=False, indent=2)
         finally:
             _release_cache_lock(lock_file)
-    except TimeoutError:
+    except TimeoutError as e:
         _LOG.warning("保存缓存超时: %s", image_hash[:8])
+        raise AICacheError(
+            message="保存缓存超时",
+            cache_path=str(cache_file),
+            operation="save",
+            original_error=e,
+        )
     except Exception as e:
         _LOG.warning("保存缓存失败：%s", e)
+        raise AICacheError(
+            message="保存缓存失败",
+            cache_path=str(cache_file),
+            operation="save",
+            original_error=e,
+        )
 
 
 def _encode_image(file_path: str) -> Optional[str]:
@@ -229,7 +273,7 @@ def _get_model() -> str:
 def _call_qwen_vl(img_data: str) -> Optional[str]:
     api_key = _get_api_key()
     if not api_key:
-        return None
+        raise AIKeyError("AI API Key 未配置")
 
     model = _get_model()
 
@@ -242,29 +286,42 @@ def _call_qwen_vl(img_data: str) -> Optional[str]:
         "文件名：xxx"
     )
 
-    resp = MultiModalConversation.call(
-        model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"text": prompt},
-                    {"image": img_data},
-                ],
-            }
-        ],
-        max_tokens=200,
-        api_key=api_key,
-        timeout=60,
-    )
+    try:
+        resp = MultiModalConversation.call(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"text": prompt},
+                        {"image": img_data},
+                    ],
+                }
+            ],
+            max_tokens=200,
+            api_key=api_key,
+            timeout=60,
+        )
 
-    if resp.status_code != 200:
-        raise Exception(f"API 返回异常：{resp.status_code}")
+        if resp.status_code != 200:
+            raise AIModelError(
+                message=f"AI 模型返回异常状态码：{resp.status_code}",
+                model=model,
+                status_code=resp.status_code,
+            )
 
-    content = resp.output.choices[0].message.content
-    if isinstance(content, list):
-        return "".join(c.get("text", "") for c in content if "text" in c)
-    return str(content)
+        content = resp.output.choices[0].message.content
+        if isinstance(content, list):
+            return "".join(c.get("text", "") for c in content if "text" in c)
+        return str(content)
+    except AIModelError:
+        raise
+    except Exception as e:
+        raise AIModelError(
+            message=f"AI 模型调用失败：{e}",
+            model=model,
+            original_error=e,
+        )
 
 
 def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
@@ -282,10 +339,13 @@ def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
     # 检查缓存
     image_hash = _get_image_hash(file_path)
     if use_cache:
-        cached = _load_cache(image_hash)
-        if cached:
-            _LOG.info("使用缓存结果：%s", Path(file_path).name)
-            return cached
+        try:
+            cached = _load_cache(image_hash)
+            if cached:
+                _LOG.info("使用缓存结果：%s", Path(file_path).name)
+                return cached
+        except AICacheError as e:
+            _LOG.warning("缓存读取失败，继续执行: %s", e)
 
     img_data = _encode_image(file_path)
     if not img_data:
@@ -301,10 +361,22 @@ def analyze_image(file_path: str, use_cache: bool = True) -> Optional[dict]:
                 result = _parse_response(text, file_path)
                 # 保存到缓存
                 if result and use_cache:
-                    _save_cache(image_hash, result)
+                    try:
+                        _save_cache(image_hash, result)
+                    except AICacheError as e:
+                        _LOG.warning("缓存保存失败，继续执行: %s", e)
                 return result
-        except Exception as e:
+        except AIKeyError:
+            # API Key 错误不重试
+            _LOG.error("AI API Key 未配置，跳过分析")
+            return None
+        except AIModelError as e:
             last_error = e
+            _LOG.warning("AI 分析失败（尝试 %d）：%s", attempt + 1, e)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避
+        except Exception as e:
+            last_error = wrap_exception(e, AIModelError)
             _LOG.warning("AI 分析失败（尝试 %d）：%s", attempt + 1, e)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY * (attempt + 1))  # 指数退避

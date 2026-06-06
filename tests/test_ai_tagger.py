@@ -5,10 +5,12 @@ import hashlib
 import base64
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from collections import OrderedDict
 
 import pytest
 
 from eagle_watcher import ai_tagger
+from eagle_watcher.exceptions import AICacheError, AIKeyError, AIModelError
 
 
 # ============================================================
@@ -141,15 +143,17 @@ class TestLoadCache:
         """空哈希返回 None。"""
         assert ai_tagger._load_cache("") is None
 
-    def test_corrupted_json_returns_none(self, mock_data_dir):
-        """损坏的 JSON 文件返回 None。"""
+    def test_corrupted_json_raises_cache_error(self, mock_data_dir):
+        """损坏的 JSON 文件抛出 AICacheError。"""
         image_hash = "badjson"
         cache_dir = mock_data_dir / "cache"
         cache_file = cache_dir / f"{image_hash}.json"
         cache_file.write_text("{invalid json", encoding="utf-8")
 
-        result = ai_tagger._load_cache(image_hash)
-        assert result is None
+        with pytest.raises(AICacheError) as exc_info:
+            ai_tagger._load_cache(image_hash)
+        assert exc_info.value.code == "AI_CACHE_ERROR"
+        assert exc_info.value.details["operation"] == "load"
 
 
 # ============================================================
@@ -442,3 +446,270 @@ class TestCacheManagement:
         import shutil
         shutil.rmtree(mock_data_dir / "cache")
         assert ai_tagger.get_cache_size() == 0
+
+
+# ============================================================
+# 内存缓存 (_get_memory_cache / _set_memory_cache)
+# ============================================================
+
+class TestMemoryCache:
+    def setup_method(self):
+        """每个测试前清空内存缓存。"""
+        ai_tagger._memory_cache.clear()
+
+    def test_get_returns_cached_value(self):
+        """命中时返回缓存值。"""
+        ai_tagger._memory_cache["hash1"] = {"tags": ["测试"]}
+        result = ai_tagger._get_memory_cache("hash1")
+        assert result == {"tags": ["测试"]}
+
+    def test_get_miss_returns_none(self):
+        """未命中时返回 None。"""
+        assert ai_tagger._get_memory_cache("nonexistent") is None
+
+    def test_set_and_get(self):
+        """设置后可以获取。"""
+        ai_tagger._set_memory_cache("h1", {"tags": ["a"]})
+        assert ai_tagger._get_memory_cache("h1") == {"tags": ["a"]}
+
+    def test_set_updates_existing(self):
+        """更新已有条目。"""
+        ai_tagger._set_memory_cache("h1", {"tags": ["old"]})
+        ai_tagger._set_memory_cache("h1", {"tags": ["new"]})
+        assert ai_tagger._get_memory_cache("h1") == {"tags": ["new"]}
+
+    def test_lru_eviction(self):
+        """超过最大大小时淘汰最旧条目。"""
+        for i in range(ai_tagger.MEMORY_CACHE_MAX_SIZE + 5):
+            ai_tagger._set_memory_cache(f"hash_{i}", {"tags": [str(i)]})
+        assert len(ai_tagger._memory_cache) == ai_tagger.MEMORY_CACHE_MAX_SIZE
+        # 最早的条目应被淘汰
+        assert ai_tagger._get_memory_cache("hash_0") is None
+        # 最新的条目应保留
+        assert ai_tagger._get_memory_cache(f"hash_{ai_tagger.MEMORY_CACHE_MAX_SIZE + 4}") is not None
+
+    def test_lru_move_to_end_on_get(self):
+        """读取时将条目移到末尾（LRU）。"""
+        ai_tagger._set_memory_cache("a", {"tags": ["a"]})
+        ai_tagger._set_memory_cache("b", {"tags": ["b"]})
+        # 读取 "a" 使其移到末尾
+        ai_tagger._get_memory_cache("a")
+        # "b" 现在是最早的，"a" 是最新的
+        keys = list(ai_tagger._memory_cache.keys())
+        assert keys[-1] == "a"
+        assert keys[0] == "b"
+
+
+# ============================================================
+# 缓存文件锁 (_acquire_cache_lock / _release_cache_lock)
+# ============================================================
+
+class TestCacheLock:
+    def test_acquire_and_release(self, mock_data_dir):
+        """正常获取和释放锁。"""
+        lock_file = ai_tagger._acquire_cache_lock(timeout=2)
+        assert lock_file is not None
+        assert not lock_file.closed
+        ai_tagger._release_cache_lock(lock_file)
+        assert lock_file.closed
+
+    def test_release_handles_errors(self):
+        """释放锁时静默处理异常。"""
+        mock_file = MagicMock()
+        mock_file.fileno.side_effect = OSError("already closed")
+        ai_tagger._release_cache_lock(mock_file)  # 不应抛出异常
+
+
+# ============================================================
+# _call_qwen_vl
+# ============================================================
+
+class TestCallQwenVl:
+    def test_raises_ai_key_error_when_no_key(self, monkeypatch):
+        """没有 API Key 时抛出 AIKeyError。"""
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_api_key", lambda: None)
+        with pytest.raises(AIKeyError):
+            ai_tagger._call_qwen_vl("data:image/png;base64,abc")
+
+    def test_raises_ai_model_error_on_non_200(self, monkeypatch):
+        """非 200 状态码抛出 AIModelError。"""
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_api_key", lambda: "test-key")
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_model", lambda: "test-model")
+
+        with patch("eagle_watcher.ai_tagger.MultiModalConversation.call") as mock:
+            mock.return_value.status_code = 500
+            with pytest.raises(AIModelError) as exc_info:
+                ai_tagger._call_qwen_vl("data:image/png;base64,abc")
+            assert exc_info.value.details["status_code"] == 500
+
+    def test_raises_ai_model_error_on_exception(self, monkeypatch):
+        """API 调用异常时抛出 AIModelError。"""
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_api_key", lambda: "test-key")
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_model", lambda: "test-model")
+
+        with patch("eagle_watcher.ai_tagger.MultiModalConversation.call") as mock:
+            mock.side_effect = ConnectionError("网络错误")
+            with pytest.raises(AIModelError) as exc_info:
+                ai_tagger._call_qwen_vl("data:image/png;base64,abc")
+            assert "网络错误" in str(exc_info.value)
+
+    def test_success_returns_text(self, monkeypatch):
+        """成功调用返回文本。"""
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_api_key", lambda: "test-key")
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_model", lambda: "test-model")
+
+        with patch("eagle_watcher.ai_tagger.MultiModalConversation.call") as mock:
+            message_mock = MagicMock()
+            message_mock.content = "标签：测试\n文件名：测试图"
+            choice_mock = MagicMock()
+            choice_mock.message = message_mock
+            mock.return_value.status_code = 200
+            mock.return_value.output.choices = [choice_mock]
+
+            result = ai_tagger._call_qwen_vl("data:image/png;base64,abc")
+            assert result == "标签：测试\n文件名：测试图"
+
+    def test_list_content_joined(self, monkeypatch):
+        """content 为列表时拼接文本。"""
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_api_key", lambda: "test-key")
+        monkeypatch.setattr("eagle_watcher.ai_tagger._get_model", lambda: "test-model")
+
+        with patch("eagle_watcher.ai_tagger.MultiModalConversation.call") as mock:
+            message_mock = MagicMock()
+            message_mock.content = [{"text": "标签：测试"}, {"text": "\n文件名：测试图"}]
+            choice_mock = MagicMock()
+            choice_mock.message = message_mock
+            mock.return_value.status_code = 200
+            mock.return_value.output.choices = [choice_mock]
+
+            result = ai_tagger._call_qwen_vl("data:image/png;base64,abc")
+            assert result == "标签：测试\n文件名：测试图"
+
+
+# ============================================================
+# analyze_image 补充测试
+# ============================================================
+
+class TestAnalyzeImageExtended:
+    def test_ai_key_error_no_retry(self, mock_data_dir, tmp_path, monkeypatch):
+        """AIKeyError 不重试，直接返回 None。"""
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"no_key_retry")
+
+        with patch("eagle_watcher.ai_tagger._get_image_hash", return_value="hash"), \
+             patch("eagle_watcher.ai_tagger._encode_image", return_value="data:image/png;base64,abc"), \
+             patch("eagle_watcher.ai_tagger._call_qwen_vl", side_effect=AIKeyError()):
+            result = ai_tagger.analyze_image(str(img_path), use_cache=False)
+            assert result is None
+
+    def test_ai_model_error_retries(self, mock_data_dir, tmp_path, with_api_key):
+        """AIModelError 触发重试。"""
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"model_retry")
+
+        success_text = "标签：重试成功\n文件名：重试图"
+        with patch("eagle_watcher.ai_tagger._call_qwen_vl") as mock_call, \
+             patch("eagle_watcher.ai_tagger.time.sleep"):
+            mock_call.side_effect = [
+                AIModelError(message="第一次失败", model="test"),
+                success_text,
+            ]
+            result = ai_tagger.analyze_image(str(img_path), use_cache=False)
+            assert result is not None
+            assert result["name"] == "重试图"
+            assert mock_call.call_count == 2
+
+    def test_cache_read_error_continues(self, mock_data_dir, tmp_path, with_api_key, mock_dashscope_success):
+        """缓存读取失败时继续执行分析。"""
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"cache_err_continue")
+
+        with patch("eagle_watcher.ai_tagger._load_cache", side_effect=AICacheError("缓存失败")):
+            result = ai_tagger.analyze_image(str(img_path), use_cache=True)
+            assert result is not None
+
+    def test_cache_save_error_continues(self, mock_data_dir, tmp_path, with_api_key, mock_dashscope_success):
+        """缓存保存失败时继续返回结果。"""
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"cache_save_err")
+
+        with patch("eagle_watcher.ai_tagger._save_cache", side_effect=AICacheError("保存失败")):
+            result = ai_tagger.analyze_image(str(img_path), use_cache=True)
+            assert result is not None
+            assert result["tags"] == ["山水", "风景", "自然"]
+
+    def test_memory_cache_hit_skips_file_cache(self, mock_data_dir, tmp_path):
+        """内存缓存命中时跳过文件缓存读取。"""
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"mem_cache_hit")
+        image_hash = hashlib.md5(b"mem_cache_hit").hexdigest()
+
+        # 只设置内存缓存
+        cached_data = {"tags": ["内存缓存"], "name": "内存结果", "raw": "mem"}
+        ai_tagger._set_memory_cache(image_hash, cached_data)
+
+        result = ai_tagger.analyze_image(str(img_path), use_cache=True)
+        assert result == cached_data
+
+
+# ============================================================
+# _encode_image 补充测试
+# ============================================================
+
+class TestEncodeImageExtended:
+    def test_gif_mime_type(self, tmp_path):
+        """GIF 图片映射为 image/gif。"""
+        img = tmp_path / "test.gif"
+        img.write_bytes(b"fake_gif")
+        result = ai_tagger._encode_image(str(img))
+        assert result.startswith("data:image/gif;base64,")
+
+    def test_webp_mime_type(self, tmp_path):
+        """WebP 图片映射为 image/webp。"""
+        img = tmp_path / "test.webp"
+        img.write_bytes(b"fake_webp")
+        result = ai_tagger._encode_image(str(img))
+        assert result.startswith("data:image/webp;base64,")
+
+    def test_bmp_mime_type(self, tmp_path):
+        """BMP 图片映射为 image/bmp。"""
+        img = tmp_path / "test.bmp"
+        img.write_bytes(b"fake_bmp")
+        result = ai_tagger._encode_image(str(img))
+        assert result.startswith("data:image/bmp;base64,")
+
+    def test_permission_error_returns_none(self, tmp_path, monkeypatch):
+        """权限错误返回 None。"""
+        img = tmp_path / "test.png"
+        img.write_bytes(b"content")
+        monkeypatch.setattr("builtins.open", MagicMock(side_effect=PermissionError("denied")))
+        assert ai_tagger._encode_image(str(img)) is None
+
+
+# ============================================================
+# _load_cache 补充测试
+# ============================================================
+
+class TestLoadCacheExtended:
+    def test_memory_cache_hit(self, mock_data_dir):
+        """内存缓存命中时直接返回，不读文件。"""
+        image_hash = "mem_hit_hash"
+        cached = {"tags": ["内存"], "name": "内存测试", "raw": "mem"}
+        ai_tagger._set_memory_cache(image_hash, cached)
+
+        result = ai_tagger._load_cache(image_hash)
+        assert result == cached
+
+    def test_loads_into_memory_cache(self, mock_data_dir):
+        """从文件缓存加载后同时写入内存缓存。"""
+        image_hash = "file_to_mem"
+        cache_dir = mock_data_dir / "cache"
+        cache_file = cache_dir / f"{image_hash}.json"
+        expected = {"tags": ["文件"], "name": "文件测试", "raw": "file"}
+        cache_file.write_text(json.dumps(expected, ensure_ascii=False), encoding="utf-8")
+
+        ai_tagger._memory_cache.clear()
+        result = ai_tagger._load_cache(image_hash)
+        assert result == expected
+        # 验证已写入内存缓存
+        assert ai_tagger._get_memory_cache(image_hash) == expected

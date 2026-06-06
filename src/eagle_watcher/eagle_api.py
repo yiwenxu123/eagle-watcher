@@ -13,6 +13,15 @@ import urllib.error
 from typing import Optional, Any
 from functools import wraps
 
+from eagle_watcher.exceptions import (
+    EagleAPIError,
+    EagleConnectionError,
+    EagleAuthError,
+    EagleTimeoutError,
+    is_retryable_error,
+    wrap_exception,
+)
+
 _LOG = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30
@@ -39,14 +48,8 @@ RETRYABLE_EXCEPTIONS = (
 
 def _is_retryable_error(error: Exception) -> bool:
     """判断错误是否可重试"""
-    if isinstance(error, urllib.error.HTTPError):
-        return error.code in RETRYABLE_STATUS_CODES
-    if isinstance(error, urllib.error.URLError):
-        # 网络错误通常可重试
-        return True
-    if isinstance(error, RETRYABLE_EXCEPTIONS):
-        return True
-    return False
+    # 使用项目特定的可重试错误判断
+    return is_retryable_error(error)
 
 
 def _calculate_retry_delay(attempt: int) -> float:
@@ -99,8 +102,8 @@ def resolve_token(cfg: dict) -> str:
         token = get_token()
         if token:
             return token
-    except Exception:
-        pass
+    except (ImportError, OSError) as e:
+        _LOG.debug("Keychain 访问失败，跳过: %s", e)
     token = os.environ.get("EAGLE_TOKEN", "")
     return token
 
@@ -253,6 +256,9 @@ class EagleAPI:
         except (KeyError, TypeError, ValueError) as e:
             _LOG.debug("get_item_file_path 数据解析异常 item_id=%s: %s", item_id, e)
             return None
+        except EagleAPIError as e:
+            _LOG.warning("get_item_file_path Eagle API 异常 item_id=%s: %s", item_id, e)
+            return None
 
     # ────────────── 文件夹操作 ──────────────
 
@@ -268,6 +274,9 @@ class EagleAPI:
             result = self._post("folder/delete", {"folderId": folder_id})
             return result.get("status") == "success"
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+            _LOG.warning("删除 Eagle 文件夹失败 %s: %s", folder_id, e)
+            return False
+        except EagleAPIError as e:
             _LOG.warning("删除 Eagle 文件夹失败 %s: %s", folder_id, e)
             return False
 
@@ -297,6 +306,12 @@ class EagleAPI:
             return data.get("status") == "success"
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
             _LOG.debug("Eagle ping 失败: %s", e)
+            return False
+        except EagleConnectionError as e:
+            _LOG.debug("Eagle 连接失败: %s", e)
+            return False
+        except EagleTimeoutError as e:
+            _LOG.debug("Eagle 连接超时: %s", e)
             return False
 
 

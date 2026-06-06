@@ -17,6 +17,12 @@ from pathlib import Path
 from eagle_watcher.config import load_config, ensure_data_dir, validate_config, DATA_DIR, CONFIG_PATH, save_config, _default_config
 from eagle_watcher.services.state_manager import get_state_manager
 from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
+from eagle_watcher.exceptions import (
+    ConfigLoadError,
+    ConfigValidationError,
+    EagleConnectionError,
+    EagleAPIError,
+)
 
 
 def start_daily_reset():
@@ -87,17 +93,30 @@ def main():
         return
 
     start_daily_reset()
-    cfg = load_config()
+
+    try:
+        cfg = load_config()
+    except ConfigLoadError as e:
+        _LOG.error("配置文件加载失败: %s", e)
+        print(f"\n  ❌ 配置文件加载失败: {e}")
+        print("     请检查 ~/.eagle-watcher/config.yaml 文件格式\n")
+        return
 
     # 验证配置
-    errors, warnings = validate_config(cfg)
-    if warnings:
-        for w in warnings:
-            _LOG.warning(f"配置警告: {w}")
-    if errors:
-        for e in errors:
-            _LOG.error(f"配置错误: {e}")
-        # DON'T return here - continue to start GUI
+    try:
+        errors, warnings = validate_config(cfg)
+        if warnings:
+            for w in warnings:
+                _LOG.warning(f"配置警告: {w}")
+        if errors:
+            for e in errors:
+                _LOG.error(f"配置错误: {e}")
+            # DON'T return here - continue to start GUI
+    except ConfigValidationError as e:
+        _LOG.error("配置验证失败: %s", e)
+        print(f"\n  ❌ 配置验证失败: {e}")
+        print("     请检查配置文件内容\n")
+        # 继续启动 GUI
 
     # 检查 AI API Key（config.yaml 优先，env 回退）
     ai_key = cfg.get("ai", {}).get("api_key") or os.environ.get("DASHSCOPE_API_KEY")

@@ -8,6 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from eagle_watcher.exceptions import (
+    FileWatcherError,
+    FSEventsError,
+    PollingError,
+    FileStabilityError,
+    wrap_exception,
+)
+
 _LOG = logging.getLogger("file_watcher")
 
 TEMP_EXTENSIONS = frozenset({
@@ -57,6 +65,19 @@ def _is_allowed(name: str) -> bool:
 
 
 def _wait_for_stable(file_path: str, interval: float = STABLE_INTERVAL, checks: int = STABLE_CHECKS) -> bool:
+    """等待文件达到稳定状态（大小不再变化）
+
+    Args:
+        file_path: 文件路径
+        interval: 检查间隔（秒）
+        checks: 检查次数
+
+    Returns:
+        True 如果文件稳定，False 如果文件不稳定或不存在
+
+    Raises:
+        FileStabilityError: 当文件稳定性检查超时时抛出
+    """
     sizes = []
     # 对大文件使用更严格的检查
     try:
@@ -64,16 +85,24 @@ def _wait_for_stable(file_path: str, interval: float = STABLE_INTERVAL, checks: 
         if size > LARGE_FILE_THRESHOLD:
             interval = LARGE_FILE_INTERVAL
             checks = LARGE_FILE_CHECKS
-    except OSError:
+    except OSError as e:
+        _LOG.debug("获取文件大小失败: %s - %s", file_path, e)
         return False
 
-    for _ in range(checks):
+    for i in range(checks):
         try:
             sizes.append(os.path.getsize(file_path))
-        except OSError:
+        except OSError as e:
+            _LOG.debug("获取文件大小失败: %s - %s", file_path, e)
             return False
-        time.sleep(interval)
-    return len(set(sizes)) == 1 and sizes[0] > 0
+        if i < checks - 1:  # 最后一次检查后不需要等待
+            time.sleep(interval)
+
+    is_stable = len(set(sizes)) == 1 and sizes[0] > 0
+    if not is_stable:
+        _LOG.debug("文件不稳定: %s (大小变化: %s)", file_path, sizes)
+
+    return is_stable
 
 
 # ── 第一层: FSEventsWatcher (PyObjC) ──
@@ -112,17 +141,29 @@ if _HAS_FSEVENTS:
             self._processing: set[str] = set()
             self._processing_lock = threading.Lock()
 
-            self._stream_ref = FSEventStreamCreate(
-                kCFAllocatorDefault,
-                self._callback_fsevents,
-                None,
-                [path],
-                kFSEventStreamEventIdSinceNow,
-                1.0,
-                kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagFileEvents,
-            )
-            if self._stream_ref is None:
-                raise OSError("FSEventStreamCreate 失败")
+            try:
+                self._stream_ref = FSEventStreamCreate(
+                    kCFAllocatorDefault,
+                    self._callback_fsevents,
+                    None,
+                    [path],
+                    kFSEventStreamEventIdSinceNow,
+                    1.0,
+                    kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagFileEvents,
+                )
+                if self._stream_ref is None:
+                    raise FSEventsError(
+                        message="FSEventStreamCreate 失败",
+                        path=path,
+                    )
+            except FSEventsError:
+                raise
+            except Exception as e:
+                raise FSEventsError(
+                    message=f"FSEvents 初始化失败: {e}",
+                    path=path,
+                    original_error=e,
+                )
 
         def _callback_fsevents(self, stream_ref, info, num_events, paths, flags, event_ids):
             for p, f in zip(paths, flags):
