@@ -1,6 +1,8 @@
 import threading
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
+
 from eagle_watcher.services.state_manager import StateManager
 
 
@@ -33,6 +35,7 @@ class TestStateManager:
         sm.set_state_from_server("_temp")
         assert sm.get_current_theme() == "_temp"
 
+        sm.flush()
         sm2 = StateManager()
         assert sm2.get_current_theme() == "_temp"
 
@@ -58,6 +61,7 @@ class TestStateManager:
         sm1 = StateManager()
         sm1.set_current_theme("秦始皇")
 
+        sm1.flush()
         sm2 = StateManager()
         assert sm2.get_current_theme() == "秦始皇"
 
@@ -194,5 +198,63 @@ class TestStateManager:
         """set_temp_watch_dirs 写入后重读一致"""
         sm = StateManager()
         sm.set_temp_watch_dirs(["/tmp/a", "/tmp/b"])
+        sm.flush()
         sm2 = StateManager()
         assert sm2.get_temp_watch_dirs() == ["/tmp/a", "/tmp/b"]
+
+
+class TestDeferredWrite:
+    """延迟批量写入机制测试"""
+
+    def test_flush_writes_to_disk(self, mock_data_dir):
+        """flush() 将脏数据写入磁盘"""
+        from eagle_watcher.services.state_manager import STATE_PATH
+        sm = StateManager()
+        sm._FLUSH_DELAY = 10.0  # 设置很长的延迟，确保不会自动 flush
+        sm.set_current_project("测试项目")
+        # 延迟写入，文件可能不存在
+        sm.flush()
+        assert STATE_PATH.exists()
+        import json
+        with open(STATE_PATH) as f:
+            state = json.load(f)
+        assert state["current_project"] == "测试项目"
+
+    def test_flush_noop_when_clean(self, mock_data_dir):
+        """没有脏数据时 flush() 不执行写入"""
+        sm = StateManager()
+        sm._save = MagicMock()  # 监控 _save 调用
+        sm.flush()
+        sm._save.assert_not_called()
+
+    def test_schedule_flush_defers_write(self, mock_data_dir):
+        """_schedule_flush 不会立即写入"""
+        sm = StateManager()
+        sm._FLUSH_DELAY = 10.0
+        sm._save = MagicMock()
+        sm.set_current_project("延迟测试")
+        # _save 不应被直接调用（由 _schedule_flush 延迟）
+        sm._save.assert_not_called()
+        assert sm._dirty is True
+        sm.flush()  # 清理
+
+    def test_multiple_sets_single_flush(self, mock_data_dir):
+        """多次 set 只触发一次磁盘写入"""
+        sm = StateManager()
+        sm._FLUSH_DELAY = 10.0
+        save_count = [0]
+        original_save = sm._save
+
+        def counting_save():
+            save_count[0] += 1
+            original_save()
+
+        sm._save = counting_save
+        sm.set_current_project("A")
+        sm.set_current_project("B")
+        sm.set_current_project("C")
+        # 延迟模式下，_save 不应被调用
+        assert save_count[0] == 0
+        # flush 后只写一次
+        sm.flush()
+        assert save_count[0] == 1

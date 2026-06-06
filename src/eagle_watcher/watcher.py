@@ -5,7 +5,6 @@ Downloads 文件夹监控
 使用分层可回退文件监控（FSEvents → inode 轮询）。
 """
 
-import hashlib
 import logging
 import os
 import threading
@@ -23,6 +22,13 @@ from eagle_watcher.eagle_api import EagleAPI, create_eagle_api
 from eagle_watcher.analyzer import decide
 from eagle_watcher.ai_tagger import analyze_image
 from eagle_watcher.notifier import notify
+from eagle_watcher.exceptions import (
+    EagleImportError,
+    EagleAPIError,
+    AIAnalysisError,
+    AIKeyError,
+    wrap_exception,
+)
 
 _LOG = logging.getLogger("watcher")
 _processing_files: set[str] = set()
@@ -33,9 +39,11 @@ _MAX_AI_FILE_SIZE = 20 * 1024 * 1024  # 20MB - Qwen-VL API limit
 _AI_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}  # 支持的文件格式
 _retry_lock = threading.Lock()
 
-# 文件指纹缓存：用于精确去重
-_file_fingerprint_cache: dict[str, str] = {}  # file_path -> fingerprint
-_fingerprint_cache_lock = threading.Lock()
+# Eagle 去重缓存：避免批量导入时重复请求
+_recent_items_cache: list = []
+_recent_items_ts: float = 0
+_recent_items_lock = threading.Lock()
+_RECENT_ITEMS_TTL = 30  # 秒
 
 # 通知节流：避免批量处理时通知轰炸
 _last_notify_time: float = 0
@@ -43,36 +51,33 @@ _notify_cooldown = 30  # 同类型通知最小间隔（秒）
 _notify_lock = threading.Lock()
 
 
-def _get_file_fingerprint(file_path: str) -> str:
-    """获取文件指纹（MD5 哈希），用于精确去重
+def _get_recent_items(eagle) -> list:
+    """获取 Eagle 最近素材列表（带 TTL 缓存）
 
-    使用缓存避免重复计算，缓存大小限制为 1000 个文件
+    批量导入时避免每个文件都触发 HTTP 请求。
     """
-    with _fingerprint_cache_lock:
-        if file_path in _file_fingerprint_cache:
-            return _file_fingerprint_cache[file_path]
-
+    global _recent_items_cache, _recent_items_ts
+    now = time.time()
+    with _recent_items_lock:
+        if _recent_items_cache and now - _recent_items_ts < _RECENT_ITEMS_TTL:
+            return _recent_items_cache
     try:
-        # 只读取前 1MB 计算哈希，提高性能
-        hash_md5 = hashlib.md5()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                hash_md5.update(chunk)
-        fingerprint = hash_md5.hexdigest()
+        items = eagle.list_items(order_by="-btime", limit=100)
+        with _recent_items_lock:
+            _recent_items_cache = items
+            _recent_items_ts = now
+        return items
+    except Exception:
+        return _recent_items_cache  # 降级使用旧缓存
 
-        # 更新缓存（限制大小）
-        with _fingerprint_cache_lock:
-            if len(_file_fingerprint_cache) >= 1000:
-                # 清理最旧的 500 个条目
-                keys_to_remove = list(_file_fingerprint_cache.keys())[:500]
-                for key in keys_to_remove:
-                    del _file_fingerprint_cache[key]
-            _file_fingerprint_cache[file_path] = fingerprint
 
-        return fingerprint
-    except Exception as e:
-        _LOG.warning("计算文件指纹失败 %s: %s", file_path, e)
-        return ""
+def _clear_recent_items_cache():
+    """清除 Eagle 去重缓存（导入成功后调用）"""
+    global _recent_items_cache, _recent_items_ts
+    with _recent_items_lock:
+        _recent_items_cache = []
+        _recent_items_ts = 0
+
 
 # AI 标签中的通用英文词，不适合作为知识库关键词（避免污染）
 _GENERIC_AI_TAGS = frozenset({
@@ -99,6 +104,10 @@ FILE_FILTER_PRESETS: dict[str, dict] = {
                                                           ".ppt", ".pptx", ".csv", ".json", ".yaml", ".yml",
                                                           ".xml", ".html", ".htm"]},
     "video":   {"label": "视频",           "extensions": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv",
+                                                          ".webm", ".m4v", ".mpg", ".mpeg", ".3gp"]},
+    "media":   {"label": "多媒体",         "extensions": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+                                                          ".svg", ".ico", ".tiff", ".tif", ".heic", ".heif", ".raw",
+                                                          ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv",
                                                           ".webm", ".m4v", ".mpg", ".mpeg", ".3gp"]},
 }
 
@@ -309,6 +318,9 @@ def _check_result(result: dict, filename: str, theme: str, tags: list[str],
         if file_path:
             sm.mark_file_processed(file_path)
 
+        # 清除去重缓存，下次检查时获取最新数据
+        _clear_recent_items_cache()
+
         sm.set_last_processed({
             "filename": filename,
             "theme": theme_label,
@@ -374,7 +386,14 @@ def _handle_ai_analysis(eagle: EagleAPI, file_path: str, filename: str,
         print(f"  ⏭️ 文件过大 ({file_size/1024/1024:.1f}MB)，跳过AI分析: {filename}")
     else:
         print(f"  🤖 文件名模糊，Qwen-VL 分析中：{filename}")
-        ai_result = analyze_image(file_path)
+        try:
+            ai_result = analyze_image(file_path)
+        except AIKeyError as e:
+            _LOG.warning("AI API Key 未配置，跳过分析: %s", e)
+            print(f"  ⚠️ AI API Key 未配置，跳过分析")
+        except AIAnalysisError as e:
+            _LOG.warning("AI 分析失败: %s", e)
+            print(f"  ⚠️ AI 分析失败: {e}")
 
     if ai_result:
         ai_tags = ai_result["tags"]
@@ -388,7 +407,11 @@ def _handle_ai_analysis(eagle: EagleAPI, file_path: str, filename: str,
         )
         _check_result(result, filename, decision.get("theme", ""), ai_tags, file_path)
         if result.get("status") != "success":
-            raise Exception(f"Eagle import failed: {result}")
+            raise EagleImportError(
+                message=f"素材导入 Eagle 失败",
+                filename=filename,
+                result=result,
+            )
         _learn_ai_knowledge(filename, ai_tags)
     else:
         print(f"  ⏭️ AI 分析跳过或失败，暂存到通用箱")
@@ -399,7 +422,11 @@ def _handle_ai_analysis(eagle: EagleAPI, file_path: str, filename: str,
         )
         _check_result(result, filename, "", tags or ["待分类"], file_path)
         if result.get("status") != "success":
-            raise Exception(f"Eagle import failed: {result}")
+            raise EagleImportError(
+                message=f"素材导入 Eagle 失败",
+                filename=filename,
+                result=result,
+            )
 
 
 def _learn_ai_knowledge(filename: str, ai_tags: list[str]) -> None:
@@ -428,14 +455,12 @@ def _process_file(eagle: EagleAPI, file_path: str):
         _LOG.debug("文件已处理过（StateManager 检查）: %s", filename)
         return
 
-    # 计算文件指纹，用于精确去重
-    file_fingerprint = _get_file_fingerprint(file_path)
     file_size = os.path.getsize(file_path)
     file_name = Path(file_path).name
 
-    # Eagle 端去重：检查最近 100 个文件（扩大范围）
+    # Eagle 端去重：检查最近 100 个文件（使用缓存避免重复请求）
     try:
-        recent = eagle.list_items(order_by="-btime", limit=100)
+        recent = _get_recent_items(eagle)
         for item in recent:
             item_name = item.get("name", "")
             item_ext = item.get("ext", "")
@@ -474,7 +499,11 @@ def _process_file(eagle: EagleAPI, file_path: str):
     )
     _check_result(result, filename, decision.get("theme", ""), tags, file_path)
     if result.get("status") != "success":
-        raise Exception(f"Eagle import failed: {result}")
+        raise EagleImportError(
+            message=f"素材导入 Eagle 失败",
+            filename=filename,
+            result=result,
+        )
 
 
 def _on_file_detected(eagle: EagleAPI, file_path: str, attempt: int = 0):

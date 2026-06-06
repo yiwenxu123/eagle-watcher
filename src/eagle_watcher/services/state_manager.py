@@ -1,5 +1,6 @@
-"""线程安全的运行时状态管理：JSON 文件持久化 + 写穿透"""
+"""线程安全的运行时状态管理：JSON 文件持久化 + 延迟批量写入"""
 
+import atexit
 import json
 import logging
 import os
@@ -46,9 +47,15 @@ def _stat_with_timeout(file_path: str, timeout: float = _STAT_TIMEOUT) -> Option
 
 class StateManager:
 
+    # 延迟写入配置
+    _FLUSH_DELAY = 2.0  # 秒
+
     def __init__(self):
         self._lock = threading.Lock()
         self._state: dict = self._load()
+        self._dirty: bool = False
+        self._flush_timer: Optional[threading.Timer] = None
+        atexit.register(self.flush)
 
     def _load(self) -> dict:
         try:
@@ -72,6 +79,30 @@ class StateManager:
             except OSError:
                 pass
             raise
+
+    def _schedule_flush(self):
+        """标记为脏，延迟写入。2 秒内的多次修改合并为一次写入。"""
+        self._dirty = True
+        if self._flush_timer is None or not self._flush_timer.is_alive():
+            self._flush_timer = threading.Timer(self._FLUSH_DELAY, self._do_flush)
+            self._flush_timer.daemon = True
+            self._flush_timer.start()
+
+    def _do_flush(self):
+        """定时器回调：在锁外执行实际写入。"""
+        with self._lock:
+            if self._dirty:
+                self._save()
+                self._dirty = False
+
+    def flush(self):
+        """立即写入磁盘（用于关闭时确保数据不丢失）。"""
+        with self._lock:
+            if self._dirty:
+                if self._flush_timer is not None:
+                    self._flush_timer.cancel()
+                self._save()
+                self._dirty = False
 
     @staticmethod
     def _default() -> dict:
@@ -99,7 +130,7 @@ class StateManager:
             state_copy["current_theme"] = name  # keep legacy field in sync
             state_copy["set_at"] = datetime.now().isoformat()
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     # ── 向后兼容：旧 get/set_current_theme 别名 ──
 
@@ -120,7 +151,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["inbox_notified_today"] = value
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     def check_and_set_inbox_notified(self) -> bool:
         """
@@ -134,7 +165,7 @@ class StateManager:
                 return False
             state_copy["inbox_notified_today"] = True
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
             return True
 
     def reset_daily_flags(self):
@@ -144,7 +175,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["inbox_notified_today"] = False
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
             _LOG.info("每日标志已重置")
 
     # ── 状态查询 ──
@@ -159,7 +190,7 @@ class StateManager:
             state_copy["current_project"] = project
             state_copy["current_theme"] = project
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     # ── 已处理文件 ──
 
@@ -184,7 +215,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["processed_files"] = list(files)
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     def mark_file_processed(self, file_path: str) -> bool:
         """原子化检查并标记文件为已处理。
@@ -208,7 +239,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["processed_files"] = list(processed)
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
             return True
 
     # ── 运行时状态 ──
@@ -223,7 +254,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["last_processed"] = info
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     def get_watcher_running(self) -> bool:
         with self._lock:
@@ -234,7 +265,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["watcher_running"] = running
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     def get_eagle_online(self) -> bool:
         with self._lock:
@@ -245,7 +276,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["eagle_online"] = online
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
 
     # ── 临时监控目录 ──
@@ -259,7 +290,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["temp_watch_dirs"] = list(dirs)
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
 
     def add_temp_watch_dir(self, path: str) -> bool:
         """添加临时监控目录，已存在则跳过。返回 True 表示新增。"""
@@ -271,7 +302,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["temp_watch_dirs"] = dirs
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
             return True
 
     def remove_temp_watch_dir(self, path: str) -> bool:
@@ -284,7 +315,7 @@ class StateManager:
             state_copy = dict(self._state)
             state_copy["temp_watch_dirs"] = dirs
             self._state = state_copy
-            self._save()
+            self._schedule_flush()
             return True
 
 

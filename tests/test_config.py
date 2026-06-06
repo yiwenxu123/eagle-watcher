@@ -536,6 +536,7 @@ class TestCurrentProject:
         get_state_manager().set_current_project(None)
 
         set_current_project("秦始皇")
+        get_state_manager().flush()
         with open(STATE_PATH) as f:
             import json
             state = json.load(f)
