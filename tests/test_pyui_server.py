@@ -62,8 +62,14 @@ def handler(mock_data_dir):
 @pytest.fixture
 def eagle_online(handler, monkeypatch, mock_eagle_api):
     """Patch create_eagle_api so handle methods get a mock EagleAPI with ping()==True."""
+    import eagle_watcher.server.panel as _panel_mod
+    _panel_mod._eagle_offline_since = 0
     monkeypatch.setattr(
-        "eagle_watcher.server.create_eagle_api",
+        "eagle_watcher.server.base.create_eagle_api",
+        lambda cfg: mock_eagle_api,
+    )
+    monkeypatch.setattr(
+        "eagle_watcher.server.panel.create_eagle_api",
         lambda cfg: mock_eagle_api,
     )
     return handler
@@ -75,7 +81,11 @@ def eagle_offline(handler, monkeypatch):
     offline_api = MagicMock()
     offline_api.ping.return_value = False
     monkeypatch.setattr(
-        "eagle_watcher.server.create_eagle_api",
+        "eagle_watcher.server.base.create_eagle_api",
+        lambda cfg: offline_api,
+    )
+    monkeypatch.setattr(
+        "eagle_watcher.server.panel.create_eagle_api",
         lambda cfg: offline_api,
     )
     return handler
@@ -86,7 +96,7 @@ def with_panel(handler, monkeypatch, mock_data_dir):
     """Create a panel.html file so _handle_panel can read it."""
     html_path = mock_data_dir / "panel.html"
     html_path.write_text("<html>test panel</html>")
-    monkeypatch.setattr("eagle_watcher.server._HTML_PATH", html_path)
+    monkeypatch.setattr("eagle_watcher.server.panel._HTML_PATH", html_path)
     return handler
 
 
@@ -523,7 +533,7 @@ class TestPOSTRoutes(PyUIHelpers):
     def test_post_scan_valid(self, handler, mock_data_dir, monkeypatch, mock_eagle_api):
         """POST /api/watch-dirs/scan 有效临时目录返回 200 并启动扫描"""
         self.do_post(handler, "/api/watch-dirs/add", {"path": str(mock_data_dir)})
-        monkeypatch.setattr("eagle_watcher.server.create_eagle_api", lambda cfg: mock_eagle_api)
+        monkeypatch.setattr("eagle_watcher.server.base.create_eagle_api", lambda cfg: mock_eagle_api)
         code, headers, body = self.do_post(handler, "/api/watch-dirs/scan",
                                            {"path": str(mock_data_dir)})
         assert code == 200
@@ -632,7 +642,7 @@ class TestStatusCache(PyUIHelpers):
     def test_cache_ttl_respected(self, eagle_online, monkeypatch, mock_eagle_api):
         """Cache serves stale data within TTL, re-fetches after expiry"""
         fake_time = [1000.0]
-        monkeypatch.setattr("eagle_watcher.server.time.time", lambda: fake_time[0])
+        monkeypatch.setattr("eagle_watcher.server.panel.time.time", lambda: fake_time[0])
 
         # First call populates cache
         self.do_get(eagle_online, "/api/status")
@@ -653,7 +663,7 @@ class TestStatusCache(PyUIHelpers):
     def test_cache_invalidated_on_status_change(self, eagle_online, monkeypatch, mock_eagle_api):
         """Cache timestamp resets on fresh fetch after TTL expiry"""
         fake_time = [1000.0]
-        monkeypatch.setattr("eagle_watcher.server.time.time", lambda: fake_time[0])
+        monkeypatch.setattr("eagle_watcher.server.panel.time.time", lambda: fake_time[0])
 
         # First call
         self.do_get(eagle_online, "/api/status")
@@ -668,7 +678,7 @@ class TestStatusCache(PyUIHelpers):
     def test_get_and_get_api_status_share_cache(self, eagle_online, monkeypatch, mock_eagle_api):
         """GET /status and GET /api/status share the same _status_cache"""
         fake_time = [1000.0]
-        monkeypatch.setattr("eagle_watcher.server.time.time", lambda: fake_time[0])
+        monkeypatch.setattr("eagle_watcher.server.panel.time.time", lambda: fake_time[0])
 
         # Call /status to populate cache
         self.do_get(eagle_online, "/status")
@@ -1058,8 +1068,8 @@ class TestExportAPI(PyUIHelpers):
         code, _, body = self.do_post(handler, "/api/export/theme", {})
         assert code == 400
 
-    @patch("eagle_watcher.server.create_eagle_api")
-    @patch("eagle_watcher.server.export_by_theme")
+    @patch("eagle_watcher.server.base.create_eagle_api")
+    @patch("eagle_watcher.server.panel.export_by_theme")
     def test_post_export_theme_success(self, mock_export, mock_api_factory, handler, mock_data_dir, tmp_path):
         """POST /api/export/theme with valid theme returns result"""
         export_dir = tmp_path / "export"
@@ -1086,3 +1096,276 @@ class TestExportAPI(PyUIHelpers):
         data = json.loads(body)
         assert "系统目录" in data["error"]
 
+
+# ══════════════════════════════════════════════════════════════
+# RemoteHandler Tests
+# ══════════════════════════════════════════════════════════════
+
+
+class TestRemoteHandler:
+    """Tests for RemoteHandler (port 9800) — API key auth + endpoints"""
+
+    @pytest.fixture
+    def remote_handler(self, mock_data_dir):
+        """Create a RemoteHandler instance with minimal HTTP request attributes."""
+        from eagle_watcher.server import RemoteHandler
+        h = RemoteHandler.__new__(RemoteHandler)
+        h.command = "GET"
+        h.path = "/ping"
+        h.request_version = "HTTP/1.0"
+        h.protocol_version = "HTTP/1.0"
+        h.headers = {}
+        h.rfile = io.BytesIO(b"")
+        h.wfile = io.BytesIO()
+        h.client_address = ("127.0.0.1", 0)
+        h.close_connection = True
+        h._headers_buffer = []
+        h.requestline = "GET /ping HTTP/1.0"
+        h.raw_requestline = b"GET /ping HTTP/1.0"
+        return h
+
+    def _do_get(self, handler, path, headers=None):
+        handler.command = "GET"
+        handler.path = path
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.headers = headers or {}
+        handler.rfile = io.BytesIO(b"")
+        handler.do_GET()
+        return _parse_response(handler.wfile.getvalue())
+
+    def _do_post(self, handler, path, body_dict=None, headers=None):
+        handler.command = "POST"
+        handler.path = path
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        body_bytes = json.dumps(body_dict or {}).encode("utf-8")
+        h = {"Content-Length": str(len(body_bytes))}
+        if headers:
+            h.update(headers)
+        handler.headers = h
+        handler.rfile = io.BytesIO(body_bytes)
+        handler.do_POST()
+        return _parse_response(handler.wfile.getvalue())
+
+    def test_ping_no_auth_required(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/ping 不需要 API Key"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_get(remote_handler, "/ping")
+        assert code == 200
+        data = json.loads(body)
+        assert data["status"] == "ok"
+
+    def test_check_api_key_no_configured_key(self, remote_handler, mock_data_dir):
+        """未配置 api_key 时允许所有请求"""
+        handler = remote_handler
+        handler.headers = {}
+        assert handler._check_api_key() is True
+
+    def test_check_api_key_valid(self, remote_handler, mock_data_dir, monkeypatch):
+        """配置了 api_key 且请求携带正确 key → 允许"""
+        import yaml
+        from eagle_watcher.config import CONFIG_PATH
+        cfg = {
+            "eagle": {"host": "http://localhost:41595", "token": ""},
+            "paths": {"downloads": str(mock_data_dir), "watch_interval": 2.0},
+            "server": {"api_key": "secret-key-123"},
+        }
+        CONFIG_PATH.write_text(yaml.dump(cfg))
+        handler = remote_handler
+        handler.headers = {"X-API-Key": "secret-key-123"}
+        assert handler._check_api_key() is True
+
+    def test_check_api_key_invalid(self, remote_handler, mock_data_dir, monkeypatch):
+        """配置了 api_key 但请求携带错误 key → 拒绝"""
+        import yaml
+        from eagle_watcher.config import CONFIG_PATH
+        cfg = {
+            "eagle": {"host": "http://localhost:41595", "token": ""},
+            "paths": {"downloads": str(mock_data_dir), "watch_interval": 2.0},
+            "server": {"api_key": "secret-key-123"},
+        }
+        CONFIG_PATH.write_text(yaml.dump(cfg))
+        handler = remote_handler
+        handler.headers = {"X-API-Key": "wrong-key"}
+        result = handler._check_api_key()
+        assert result is False
+        code, _, body = _parse_response(handler.wfile.getvalue())
+        assert code == 401
+
+    def test_check_api_key_missing_header(self, remote_handler, mock_data_dir, monkeypatch):
+        """配置了 api_key 但请求未携带 key → 拒绝"""
+        import yaml
+        from eagle_watcher.config import CONFIG_PATH
+        cfg = {
+            "eagle": {"host": "http://localhost:41595", "token": ""},
+            "paths": {"downloads": str(mock_data_dir), "watch_interval": 2.0},
+            "server": {"api_key": "secret-key-123"},
+        }
+        CONFIG_PATH.write_text(yaml.dump(cfg))
+        handler = remote_handler
+        handler.headers = {}
+        result = handler._check_api_key()
+        assert result is False
+
+    def test_get_status_with_auth(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/status 需要认证（未配置 key 时允许）"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_get(remote_handler, "/status")
+        assert code == 200
+        data = json.loads(body)
+        assert data["status"] == "ok"
+        assert "data" in data
+
+    def test_get_status_eagle_offline(self, remote_handler, monkeypatch):
+        """/status Eagle 离线时 eagle_online=False"""
+        offline_api = MagicMock()
+        offline_api.ping.return_value = False
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: offline_api)
+        code, _, body = self._do_get(remote_handler, "/status")
+        assert code == 200
+        data = json.loads(body)
+        assert data["data"]["eagle_online"] is False
+
+    def test_get_unknown_route_404(self, remote_handler, monkeypatch, mock_eagle_api):
+        """未知 GET 路由返回 404"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_get(remote_handler, "/unknown")
+        assert code == 404
+
+    def test_post_import_no_auth(self, remote_handler, mock_data_dir, monkeypatch, mock_eagle_api):
+        """/import 不带认证时被拒绝（配置了 key 时）"""
+        import yaml
+        from eagle_watcher.config import CONFIG_PATH
+        cfg = {
+            "eagle": {"host": "http://localhost:41595", "token": ""},
+            "paths": {"downloads": str(mock_data_dir), "watch_interval": 2.0},
+            "server": {"api_key": "secret"},
+        }
+        CONFIG_PATH.write_text(yaml.dump(cfg))
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_post(remote_handler, "/import", {"file_url": "http://example.com/img.jpg"})
+        assert code == 401
+
+    def test_post_import_empty_body(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/import 空 body 返回 400"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        handler = remote_handler
+        handler.command = "POST"
+        handler.path = "/import"
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.headers = {"Content-Length": "0"}
+        handler.rfile = io.BytesIO(b"")
+        handler.do_POST()
+        code, _, body = _parse_response(handler.wfile.getvalue())
+        assert code == 400
+        data = json.loads(body)
+        assert "empty body" in data["message"]
+
+    def test_post_import_invalid_json(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/import 无效 JSON 返回 400"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        handler = remote_handler
+        handler.command = "POST"
+        handler.path = "/import"
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        body = b"not json"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler.do_POST()
+        code, _, body = _parse_response(handler.wfile.getvalue())
+        assert code == 400
+        data = json.loads(body)
+        assert "invalid JSON" in data["message"]
+
+    def test_post_import_missing_file_url_and_path(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/import 缺少 file_url 和 file_path 返回 400"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_post(remote_handler, "/import", {"project": "test"})
+        assert code == 400
+        data = json.loads(body)
+        assert "file_url or file_path" in data["message"]
+
+    def test_post_import_with_url(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/import 使用 file_url 导入成功"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_post(remote_handler, "/import", {
+            "file_url": "http://example.com/img.jpg",
+            "project": "测试项目",
+            "tags": ["测试"],
+        })
+        assert code == 200
+        data = json.loads(body)
+        assert data["status"] == "success"
+
+    def test_post_import_unknown_route(self, remote_handler, monkeypatch, mock_eagle_api):
+        """/unknown POST 路由返回 404"""
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: mock_eagle_api)
+        code, _, body = self._do_post(remote_handler, "/unknown", {})
+        assert code == 404
+
+    def test_get_eagle_offline_returns_503(self, remote_handler, monkeypatch):
+        """_get_eagle Eagle 离线时返回 503"""
+        offline_api = MagicMock()
+        offline_api.ping.return_value = False
+        monkeypatch.setattr("eagle_watcher.server.remote.create_eagle_api", lambda cfg: offline_api)
+        result = remote_handler._get_eagle()
+        assert result is None
+        code, _, body = _parse_response(remote_handler.wfile.getvalue())
+        assert code == 503
+
+
+# ── 通用工具函数测试 ────────────────────────────────────────────
+
+
+class TestServerUtilities:
+    """Tests for server utility functions"""
+
+    def test_invalidate_status_cache(self):
+        """_invalidate_status_cache 清除缓存并重置离线状态"""
+        import eagle_watcher.server._common as cm
+        cm._status_cache["data"] = {"test": True}
+        cm._status_cache["ts"] = 999
+        cm._eagle_offline_since = 100
+
+        cm._invalidate_status_cache()
+        assert cm._status_cache["data"] is None
+        assert cm._eagle_offline_since == 0
+
+    def test_get_status_pool_creates_pool(self):
+        """_get_status_pool 首次调用时创建线程池"""
+        import eagle_watcher.server._common as cm
+        cm._status_pool = None
+        pool = cm._get_status_pool()
+        assert pool is not None
+        pool2 = cm._get_status_pool()
+        assert pool is pool2
+        pool.shutdown(wait=False)
+        cm._status_pool = None
+
+    def test_ensure_panel_token_returns_string(self):
+        """_ensure_panel_token 返回非空字符串"""
+        import eagle_watcher.server._common as cm
+        cm._panel_token_initialized = False
+        token = cm._ensure_panel_token()
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+    def test_ensure_panel_token_idempotent(self):
+        """_ensure_panel_token 多次调用返回相同 token"""
+        import eagle_watcher.server._common as cm
+        cm._panel_token_initialized = False
+        token1 = cm._ensure_panel_token()
+        token2 = cm._ensure_panel_token()
+        assert token1 == token2
+
+    def test_panel_token_refresh_after_ttl(self):
+        """Token 超过 TTL 后自动刷新"""
+        import eagle_watcher.server._common as cm
+        cm._panel_token_initialized = False
+        token1 = cm._ensure_panel_token()
+        cm._panel_token_created_at = time.time() - cm._PANEL_TOKEN_TTL - 1
+        token2 = cm._ensure_panel_token()
+        assert token1 != token2

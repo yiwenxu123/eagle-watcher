@@ -1,29 +1,9 @@
-"""
-HTTP Server — 统一服务器，支持远程 Agent API + HUD 面板
-
-远程 Agent（Hermes / OpenClaw）通过 SSH 隧道调用端口 9800：
-  ssh -L 9800:localhost:9800 mac
-
-HUD 面板前端通过端口 9801 访问。
-
-架构：
-  BaseHandler      — 共享基类（JSON/HTML 响应、CORS、EagleAPI 创建）
-  RemoteHandler    — 远程 Agent API（GET /ping, GET /status, POST /import）
-  PanelHandler     — HUD 面板 API（前端页面 + JSON API 路由）
-
-用法：
-  python server.py          → 启动远程 Agent API（端口 9800）
-  python -c "from eagle_watcher.server import start_panel_server; start_panel_server()"
-                            → 启动 HUD 面板 API（端口 9801）
-"""
+"""PanelHandler — HUD 面板 API（端口 9801）"""
 
 import json
 import logging
 import os
-import secrets
-import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
@@ -31,7 +11,7 @@ from urllib.parse import urlparse, parse_qs
 from eagle_watcher.pyui.panel import set_pinned as panel_set_pinned
 from eagle_watcher.ai_tagger import _get_api_key, _get_model, clear_cache as ai_clear_cache, get_cache_size as ai_cache_size
 from eagle_watcher.config import (
-    load_config, save_config, ensure_data_dir,
+    load_config, save_config,
     get_categories, get_category_names, get_category_info,
     get_projects, get_project_info, get_current_project, set_current_project,
     create_project, delete_project, create_category, delete_category,
@@ -41,338 +21,18 @@ from eagle_watcher.services.state_manager import get_state_manager
 from eagle_watcher.knowledge import match_by_filename, record_match, list_keywords, update_keyword, delete_keyword, get_knowledge_stats
 from eagle_watcher.exporter import export_file, get_export_status, clear_export_dir, export_by_theme
 from eagle_watcher.analyzer import decide
-from eagle_watcher.watcher import scan_directory, get_scan_progress
+from eagle_watcher.watcher import scan_directory, get_scan_progress, resolve_filter_extensions
+from eagle_watcher.server._common import (
+    _HTML_PATH, _status_cache, _status_cache_lock, _STATUS_CACHE_TTL,
+    _eagle_offline_since, _EAGLE_OFFLINE_RETRY_INTERVAL,
+    _idempotency_cache, _idempotency_lock, _IDEMPOTENCY_TTL, _IDEMPOTENCY_MAX_KEYS,
+    _get_status_pool, _invalidate_status_cache,
+    _get_watch_dirs_from_config, _ensure_panel_token,
+)
+from eagle_watcher.server.base import BaseHandler
 
 _LOG = logging.getLogger("server")
 
-HOST = "127.0.0.1"
-REMOTE_PORT = 9800
-PANEL_PORT = 9801
-
-_HTML_PATH = Path(__file__).parent / "pyui" / "panel.html"
-
-# 状态缓存：避免每 5 秒重复查询 Eagle 全量数据
-_status_cache: dict = {"data": None, "ts": 0}
-_status_cache_lock = threading.Lock()
-_STATUS_CACHE_TTL = 10  # 秒
-
-# 可复用的线程池（避免每次 /api/status 创建新池）
-_status_pool = None
-_status_pool_lock = threading.Lock()
-
-# Eagle 离线状态缓存：离线时降频 ping，避免每 5 秒连一次
-_eagle_offline_since: float = 0  # 上次 ping 失败的时间戳
-_EAGLE_OFFLINE_RETRY_INTERVAL = 30  # 离线后每 30 秒再试一次
-
-
-def _get_status_pool():
-    global _status_pool
-    if _status_pool is None:
-        with _status_pool_lock:
-            if _status_pool is None:
-                from concurrent.futures import ThreadPoolExecutor
-                _status_pool = ThreadPoolExecutor(max_workers=3)
-    return _status_pool
-
-
-def _invalidate_status_cache():
-    """清除状态缓存，强制下次 /api/status 重新计算"""
-    global _status_cache, _eagle_offline_since
-    with _status_cache_lock:
-        _status_cache["data"] = None
-        _eagle_offline_since = 0  # 同时重置离线状态，允许下次请求重试
-
-
-# 幂等性缓存：有序字典 + 惰性过期，防止无限增长
-_idempotency_cache: dict[str, float] = {}
-_idempotency_lock = threading.Lock()
-_IDEMPOTENCY_TTL = 30  # seconds
-_IDEMPOTENCY_MAX_KEYS = 200  # 防止内存泄漏的硬上限
-
-# 面板服务器 session token：启动时生成，注入前端页面，验证 API 请求
-_panel_session_token: str = ""
-_panel_token_initialized = False
-_panel_token_created_at: float = 0  # Token 创建时间戳
-_PANEL_TOKEN_TTL = 24 * 60 * 60  # Token 有效期（24 小时）
-
-
-def _get_watch_dirs_from_config() -> list[dict]:
-    """从配置 + state 读取所有监控目录信息（config 目录 + 临时目录）"""
-    cfg = load_config()
-    dirs = []
-    downloads = cfg.get("paths", {}).get("downloads", "")
-    if downloads:
-        expanded = os.path.expanduser(downloads)
-        dirs.append({
-            "path": expanded,
-            "exists": Path(expanded).is_dir(),
-            "type": "downloads",
-        })
-    extra = cfg.get("paths", {}).get("extra_watch_dirs", [])
-    if isinstance(extra, list):
-        for d in extra:
-            expanded = os.path.expanduser(d)
-            dirs.append({
-                "path": expanded,
-                "exists": Path(expanded).is_dir(),
-                "type": "extra",
-            })
-    sm = get_state_manager()
-    for d in sm.get_temp_watch_dirs():
-        expanded = os.path.expanduser(d)
-        dirs.append({
-            "path": expanded,
-            "exists": Path(expanded).is_dir(),
-            "type": "temp",
-        })
-    return dirs
-
-
-def _ensure_panel_token():
-    """确保 Token 有效，过期则自动生成新的"""
-    global _panel_session_token, _panel_token_initialized, _panel_token_created_at
-
-    current_time = time.time()
-
-    # 检查是否需要生成新 Token
-    if (not _panel_token_initialized or
-            current_time - _panel_token_created_at > _PANEL_TOKEN_TTL):
-        _panel_session_token = secrets.token_urlsafe(32)
-        _panel_token_initialized = True
-        _panel_token_created_at = current_time
-        _LOG.info("面板 Token 已更新")
-
-    return _panel_session_token
-
-
-# ══════════════════════════════════════════════════════════════
-# BaseHandler — 共享基类
-# ══════════════════════════════════════════════════════════════
-
-class BaseHandler(BaseHTTPRequestHandler):
-    """共享基类：JSON/HTML 响应、CORS、EagleAPI 创建"""
-
-    def log_message(self, format, *args):
-        # 过滤路径中的 token 参数，防止日志泄露
-        safe_path = self.path.split("?")[0] if "token=" in self.path else self.path
-        _LOG.info("HTTP %s %s - %s", self.command, safe_path, args[0] if args else '')
-
-    def _send(self, code: int, body, content_type="application/json"):
-        self.send_response(code)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        if isinstance(body, (dict, list)):
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        elif isinstance(body, str):
-            data = body.encode("utf-8")
-        else:
-            data = body
-        self.wfile.write(data)
-
-    def _send_json(self, code: int, data: dict):
-        self._send(code, data, "application/json")
-
-    def _send_html(self, code: int, html: str):
-        # 禁止缓存，确保 WKWebView 始终拿到最新面板
-        self.send_response(code)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "null")
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
-        self.end_headers()
-        token = _ensure_panel_token()
-        injected = html.replace(
-            "</head>",
-            f'<meta name="session-token" content="{token}">\n</head>'
-        )
-        data = injected.encode("utf-8") if isinstance(injected, str) else injected
-        self.wfile.write(data)
-
-    def _eagle(self) -> Optional[EagleAPI]:
-        """创建 EagleAPI 连接，离线时发送 503 并返回 None。"""
-        cfg = load_config()
-        api = create_eagle_api(cfg)
-        if not api.ping():
-            self._send_json(503, {"error": "Eagle 未运行"})
-            return None
-        return api
-
-    def _eagle_safe(self) -> Optional[EagleAPI]:
-        """创建 EagleAPI 连接，离线时返回 None（不发送错误响应）。"""
-        cfg = load_config()
-        api = create_eagle_api(cfg)
-        return api if api.ping() else None
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-
-# ══════════════════════════════════════════════════════════════
-# RemoteHandler — 远程 Agent API（端口 9800）
-# ══════════════════════════════════════════════════════════════
-
-class RemoteHandler(BaseHandler):
-    """远程 Agent API：GET /ping, GET /status, POST /import
-
-    认证方式（可选）：
-      在 config.yaml 中设置 server.api_key，请求时通过 X-API-Key header 传入。
-      未配置 api_key 时向后兼容，允许所有请求。
-      /ping 端点始终开放（无需认证）。
-    """
-
-    def _check_api_key(self) -> bool:
-        """验证 X-API-Key header 与配置中的 server.api_key 匹配。
-        如果未配置 api_key，则允许所有请求（向后兼容）。
-        """
-        cfg = load_config()
-        expected = cfg.get("server", {}).get("api_key", "")
-        if not expected:
-            return True  # 未配置 api_key：向后兼容，允许所有请求
-        actual = self.headers.get("X-API-Key", "")
-        if actual == expected:
-            return True
-        self._send_json(401, {"status": "error", "message": "invalid or missing API key"})
-        return False
-
-    def _get_eagle(self) -> Optional[EagleAPI]:
-        """创建 EagleAPI（使用 status/message 错误格式，保持向后兼容）。"""
-        cfg = load_config()
-        eagle = create_eagle_api(cfg)
-        if not eagle.ping():
-            self._send_json(503, {"status": "error", "message": "Eagle 未运行"})
-            return None
-        return eagle
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-
-        # /ping 不验证 API Key（健康检查端点）
-        if path == "/ping":
-            cfg = load_config()
-            eagle = create_eagle_api(cfg)
-            online = eagle.ping()
-            self._send_json(200, {"status": "ok", "eagle_online": online})
-
-        # 其他 GET 端点需要 API Key 认证
-        if not self._check_api_key():
-            return
-
-        if path == "/status":
-            cfg = load_config()
-            eagle = create_eagle_api(cfg)
-            from eagle_watcher.config import get_current_project, get_project_names
-            info = {
-                "project": get_current_project(),
-                "projects": get_project_names(),
-                "eagle_online": eagle.ping(),
-            }
-            if eagle.ping():
-                try:
-                    folders = eagle.list_folders()
-                    info["folders"] = [f["name"] for f in folders]
-                except Exception as e:
-                    _LOG.warning("Failed to fetch folder list: %s", e)
-                    info["folders"] = []
-            self._send_json(200, {"status": "ok", "data": info})
-
-        else:
-            self._send_json(404, {"status": "error", "message": "not found"})
-
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-
-        if not self._check_api_key():
-            return
-
-        if path != "/import":
-            self._send_json(404, {"status": "error", "message": "not found"})
-            return
-
-        content_len = int(self.headers.get("Content-Length", 0))
-        if content_len == 0:
-            self._send_json(400, {"status": "error", "message": "empty body"})
-            return
-
-        try:
-            body = json.loads(self.rfile.read(content_len))
-        except json.JSONDecodeError:
-            self._send_json(400, {"status": "error", "message": "invalid JSON"})
-            return
-
-        file_url = body.get("file_url", "")
-        file_path = body.get("file_path", "")
-        project = body.get("project")
-        tags = body.get("tags", [])
-        folder = body.get("folder")
-
-        if not file_url and not file_path:
-            self._send_json(400, {"status": "error", "message": "file_url or file_path is required"})
-            return
-
-        eagle = self._get_eagle()
-        if not eagle:
-            return
-
-        # 当未指定 project 时，通过 decide() 决策引擎自动判断
-        if not project:
-            filename = Path(file_path).name if file_path else Path(file_url).name
-            decision = decide(filename)
-            if decision.get("theme"):
-                project = decision["theme"]
-                tags = list(dict.fromkeys(decision.get("tags", []) + tags))
-                folder = folder or decision.get("folder", project)
-
-        target_folder = folder or project
-        folder_id = None
-        if target_folder:
-            folder_id = eagle.get_or_create_folder(target_folder)
-
-        try:
-            if file_path:
-                if not Path(file_path).exists():
-                    self._send_json(400, {"status": "error", "message": f"file not found: {file_path}"})
-                    return
-                result = eagle.add_from_path(
-                    file_path,
-                    tags=tags,
-                    folder_id=folder_id,
-                )
-            else:
-                result = eagle.add_from_url(
-                    file_url,
-                    tags=tags,
-                    folder_id=folder_id,
-                )
-        except Exception as e:
-            _LOG.exception("导入失败")
-            self._send_json(500, {"status": "error", "message": str(e)})
-            return
-
-        if result.get("status") == "success":
-            _invalidate_status_cache()
-            self._send_json(200, {
-                "status": "success",
-                "message": f"已入库：{target_folder or '未分类'}",
-                "data": {"tags": tags, "folder": target_folder},
-            })
-        else:
-            self._send_json(500, {
-                "status": "error",
-                "message": str(result),
-            })
-
-
-# ══════════════════════════════════════════════════════════════
-# PanelHandler — HUD 面板 API（端口 9801）
-# ══════════════════════════════════════════════════════════════
 
 class PanelHandler(BaseHandler):
     """HUD 面板：前端页面 + JSON API"""
@@ -650,18 +310,26 @@ class PanelHandler(BaseHandler):
             self._check_idempotency(body, f"del_cat:{name}")
             _invalidate_status_cache()
             self._send_json(200, {"ok": True})
+
     # ────────── API: 通用箱整理 ──────────
 
     def _handle_api_inbox(self):
         api = self._eagle()
         if not api:
             return
-        # 支持分页参数
+        # 支持分页参数 + 媒体类型过滤
         qs = parse_qs(urlparse(self.path).query)
         limit = int(qs.get("limit", [50])[0])
         offset = int(qs.get("offset", [0])[0])
+        media_type = qs.get("media_type", [None])[0]  # all / image / video / media
 
         items = api.list_items(tags="待分类", limit=limit, offset=offset)
+
+        # 按媒体类型后过滤（Eagle API 不支持服务端扩展名过滤）
+        if media_type and media_type != "all":
+            exts = resolve_filter_extensions(media_type)
+            if exts:
+                items = [i for i in items if f".{i.get('ext', '')}".lower() in exts]
 
         result = []
         for item in items:
@@ -786,7 +454,6 @@ class PanelHandler(BaseHandler):
     # ────────── API: 知识库管理 ──────────
 
     def _handle_knowledge_list(self):
-        from urllib.parse import parse_qs
         params = parse_qs(urlparse(self.path).query)
         search = params.get("search", [""])[0]
         theme = params.get("theme", [""])[0]
@@ -853,7 +520,6 @@ class PanelHandler(BaseHandler):
                     return
                 # 检查可写性：尝试创建目录
                 try:
-                    from pathlib import Path
                     Path(real_path).mkdir(parents=True, exist_ok=True)
                 except OSError as e:
                     self._send_json(400, {"error": f"目录不可写: {e}"})
@@ -1092,7 +758,7 @@ class PanelHandler(BaseHandler):
         else:
             self._send_json(500, {"error": str(result)})
 
-# ────────── 路由 ──────────
+    # ────────── 路由 ──────────
 
     @staticmethod
     def _check_idempotency(body: dict, name: str) -> bool:
@@ -1244,56 +910,3 @@ class PanelHandler(BaseHandler):
 
     def do_POST(self):
         self._route()
-
-
-# ══════════════════════════════════════════════════════════════
-# 启动入口
-# ══════════════════════════════════════════════════════════════
-
-def start_remote_server(host: str = HOST, port: int = REMOTE_PORT):
-    """启动远程 Agent API 服务器（端口 9800）。"""
-    try:
-        from eagle_watcher._logging import setup_logging
-        setup_logging("eagle-server")
-    except Exception:
-        pass
-
-    HTTPServer.allow_reuse_address = True
-    server = HTTPServer((host, port), RemoteHandler)
-    print(f"🌐  HTTP Server 已启动：http://{host}:{port}")
-    print(f"    POST /import  — 远程 Agent 导入素材")
-    print(f"    GET  /ping    — 健康检查（无需认证）")
-    print(f"    GET  /status  — 状态查询")
-    # 检查 API Key 是否已配置
-    _cfg = load_config()
-    _server_key = _cfg.get("server", {}).get("api_key", "")
-    if _server_key:
-        print(f"    🔑 API Key 认证已启用")
-    else:
-        print(f"    ⚠️  API Key 未配置（请求无需认证）")
-    print(f"    按 Ctrl+C 停止\n")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n👋 HTTP Server 已停止")
-        server.server_close()
-
-
-def start_panel_server(host: str = HOST, port: int = PANEL_PORT):
-    """启动 HUD 面板 API 服务器（端口 9801）。"""
-    HTTPServer.allow_reuse_address = True
-    server = HTTPServer((host, port), PanelHandler)
-    _LOG.info("HTTP 服务器已启动: http://%s:%s", host, port)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.server_close()
-
-
-# 向后兼容别名：eagle-watcher.pyproject.toml 指向此入口
-# menu_app.py 从 eagle_watcher.pyui.server 导入 start_server
-start_server = start_remote_server
-
-if __name__ == "__main__":
-    ensure_data_dir()
-    start_server()

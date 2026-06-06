@@ -46,8 +46,8 @@ def mock_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("eagle_watcher.ai_tagger.CACHE_DIR", fake_dir / "cache")
 
     # 重置 server 模块的 Eagle 离线状态缓存，避免跨测试污染
-    import eagle_watcher.server as sv
-    sv._eagle_offline_since = 0
+    from eagle_watcher.server import _reset_eagle_offline
+    _reset_eagle_offline()
 
     return fake_dir
 
